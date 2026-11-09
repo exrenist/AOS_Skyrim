@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Altar of Spellmaking</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="skyrim-viewport">
+        <section class="skyrim-window" role="dialog" aria-labelledby="ui-title">
+            
+            <!-- Global Skyrim Header -->
+            <header class="skyrim-header">
+                <span class="ornament-line" aria-hidden="true"></span>
+                <h1 id="ui-title">ALTAR OF SPELLMAKING</h1>
+                <span class="ornament-line" aria-hidden="true"></span>
+            </header>
+
+            <!-- Dual-Page Altar Grid -->
+            <div class="altar-grid">
+                
+                <!-- LEFT PAGE: Known Magic Effects Directory -->
+                <aside class="page-sheet left-sheet">
+                    <div class="sheet-header">
+                        <h2>KNOWN EFFECTS</h2>
+                    </div>
+                    <div class="divider"></div>
+
+                    <!-- Scrollable List of Known Spells with Bronze Scrollbar -->
+                    <ul class="effects-scroll" id="effectList" role="listbox">
+                        <!-- Populated dynamically via script.js -->
+                    </ul>
+
+                    <!-- Player Gold Display -->
+                    <footer class="sheet-footer">
+                        <div class="currency-box">
+                            <span class="vector-icon coin-icon">
+                                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="5" fill="currentColor"/></svg>
+                            </span>
+                            <span class="currency-val font-futura" id="playerGoldDisplay">0</span>
+                        </div>
+                    </footer>
+                </aside>
+
+                <!-- RIGHT PAGE: Configuration & Added Effects Cart -->
+                <main class="page-sheet right-sheet">
+                    
+                    <!-- Spell Naming Bar -->
+                    <div class="spell-naming-bar">
+                        <span class="vector-icon feather-icon">
+                            <svg viewBox="0 0 24 24"><path d="M21 3c-3 0-8 3-11 7l-2 5 5-2c4-3 7-8 7-11z" fill="currentColor"/><path d="M3 21l6-2-4-4-2 6z" fill="currentColor"/></svg>
+                        </span>
+                        <input type="text" id="spellNameInput" placeholder="Enter Name Here" maxlength="32" spellcheck="false" autocomplete="off">
+                    </div>
+                    <div class="divider"></div>
+
+                    <!-- VIEW A: Cart Mode -->
+                    <div class="subview" id="viewCart">
+                        <div class="subview-header">
+                            <span class="subview-ornament"></span>
+                            <h3>Added Effects</h3>
+                            <span class="subview-ornament"></span>
+                        </div>
+
+                        <div class="added-effects-container" id="addedEffectsContainer">
+                            <p class="empty-cart-msg" id="emptyCartMsg">You haven't added any effects yet.</p>
+                            <ul class="added-effects-list" id="addedEffectsList"></ul>
+                        </div>
+                    </div>
+
+                    <!-- VIEW B: Configuration Mode (Zero Overlap) -->
+                    <div class="subview hidden" id="viewConfig">
+                        <div class="config-selected-header">
+                            <span class="effect-icon-wrap" id="cfgBadge"></span>
+                            <h3 id="cfgEffectName">Selected Effect</h3>
+                        </div>
+
+                        <div class="config-desc-box">
+                            <p class="config-desc-text" id="cfgEffectDesc">Channels arcane energies into the woven incantation.</p>
+                        </div>
+                        <div class="divider"></div>
+
+                        <!-- Target Delivery Selector -->
+                        <div class="config-row">
+                            <span class="row-label">Delivery (Target Type)</span>
+                            <div class="range-selector" id="rangeGroup">
+                                <button type="button" class="range-btn active" data-range="Self">Self</button>
+                                <button type="button" class="range-btn" data-range="Aimed">Aimed</button>
+                            </div>
+                        </div>
+
+                        <!-- Magnitude Control -->
+                        <div class="config-row">
+                            <div class="slider-labels">
+                                <span class="row-label">Magnitude</span>
+                                <span class="val-tag font-futura" id="cfgMagVal">15</span>
+                            </div>
+                            <input type="range" id="cfgMagSlider" min="1" max="100" value="15" class="skyrim-range">
+                        </div>
+
+                        <!-- Area Control with Dynamic Unit Switcher -->
+                        <div class="config-row">
+                            <div class="slider-labels">
+                                <span class="row-label">Area</span>
+                                <span class="val-tag clickable-unit" id="cfgAreaToggle">
+                                    <span class="font-futura" id="cfgAreaVal">0</span>
+                                    <span class="unit-badge" id="unitBadge">ft</span>
+                                </span>
+                            </div>
+                            <input type="range" id="cfgAreaSlider" min="0" max="60" value="0" class="skyrim-range">
+                        </div>
+
+                        <!-- Duration Control -->
+                        <div class="config-row">
+                            <div class="slider-labels">
+                                <span class="row-label">Duration</span>
+                                <span class="val-tag font-futura" id="cfgDurVal">10 s</span>
+                            </div>
+                            <input type="range" id="cfgDurSlider" min="1" max="120" value="10" class="skyrim-range">
+                        </div>
+
+                        <!-- Modal Confirm / Cancel -->
+                        <div class="config-actions">
+                            <button type="button" class="action-btn confirm" id="cfgConfirmBtn">Confirm</button>
+                            <button type="button" class="action-btn cancel" id="cfgCancelBtn">Cancel</button>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Summary & Crafting Bar -->
+                    <footer class="cart-summary-bar">
+                        <div class="stat-cluster">
+                            <div class="summary-pill magicka" title="Required Magicka / Max Magicka">
+                                <span class="vector-icon stat-icon">
+                                    <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor"/></svg>
+                                </span>
+                                <span class="font-futura" id="totalMagickaDisplay">0 / 0</span>
+                            </div>
+                            <div class="summary-pill duration" title="Primary Spell Duration">
+                                <span class="vector-icon stat-icon">
+                                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><polyline points="12 7 12 12 15 15" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+                                </span>
+                                <span class="font-futura" id="totalDurationDisplay">0 s</span>
+                            </div>
+                            <div class="summary-pill gold" title="Total Crafting Gold Cost">
+                                <span class="vector-icon stat-icon">
+                                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="5" fill="currentColor"/></svg>
+                                </span>
+                                <span class="font-futura" id="totalGoldDisplay">0</span>
+                            </div>
+                        </div>
+
+                        <!-- Primary Execution Buttons -->
+                        <div class="primary-actions">
+                            <button type="button" class="skyrim-action-btn primary" id="createSpellBtn">CREATE</button>
+                            <button type="button" class="skyrim-action-btn" id="closeMenuBtn">CLOSE</button>
+                        </div>
+                    </footer>
+                </main>
+
+            </div>
+        </section>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

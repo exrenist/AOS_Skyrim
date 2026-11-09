@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "name": "AOS_Skyrim",
+  "version": "1.0.0",
+  "author": "akisar",
+  "description": "Altar of Spellmaking in Skyrim NG",
+  "libraries": {
+    "commonlib": {
+      "name": "commonlib",
+      "revision": "dec1be18b1880c1f643afedc0d01db0118d648f9",
+      "repository": "https://github.com/alandtse/CommonLibSSE-NG.git",
+      "adapter": "source-v2"
+    },
+    "xbyak": {
+      "name": "xbyak",
+      "revision": "df112862583c2d327c1d9782fd28f53aa675f11d",
+      "repository": "https://github.com/herumi/xbyak.git"
+    }
+  },
+  "created_at": 1794005668
+}
