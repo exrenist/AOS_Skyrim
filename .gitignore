@@ -2,3 +2,5 @@ build/
 .xmake/
 dist/
 .clibdt/
+*.lock
+*.bsa
