@@ -7,7 +7,8 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="skyrim-viewport">
+    <!-- Initial double-lock prevents popup during Skyrim launch -->
+    <div class="skyrim-viewport hidden-viewport" id="altarViewport">
         <section class="skyrim-window" role="dialog" aria-labelledby="ui-title">
             
             <!-- Global Skyrim Header -->
@@ -17,8 +18,10 @@
                 <span class="ornament-line" aria-hidden="true"></span>
             </header>
 
-            <!-- Dual-Page Altar Grid -->
-            <div class="altar-grid">
+            <!-- ======================================================== -->
+            <!-- MODE 1: FORGE GRID (ORIGINAL WORKING STRUCTURE)          -->
+            <!-- ======================================================== -->
+            <div class="altar-grid" id="forgeModeContainer">
                 
                 <!-- LEFT PAGE: Known Magic Effects Directory -->
                 <aside class="page-sheet left-sheet">
@@ -157,8 +160,89 @@
                         </div>
                     </footer>
                 </main>
-
             </div>
+
+            <!-- ======================================================== -->
+            <!-- MODE 2: DECONSTRUCT GRID (ISOLATED SECONDARY SCREEN)      -->
+            <!-- ======================================================== -->
+            <div class="altar-grid hidden" id="deconstructModeContainer">
+                
+                <!-- Left Sheet: Bound Incantations -->
+                <aside class="page-sheet left-sheet">
+                    <div class="sheet-header">
+                        <h2>BOUND INCANTATIONS</h2>
+                    </div>
+                    <div class="divider"></div>
+
+                    <ul class="effects-scroll" id="createdSpellList" role="listbox">
+                        <!-- Populated dynamically via script.js -->
+                    </ul>
+
+                    <footer class="sheet-footer">
+                        <div class="spell-count-box">
+                            <span>Crafted:</span>
+                            <span class="count-val font-futura" id="createdSpellCount">0</span>
+                        </div>
+                    </footer>
+                </aside>
+
+                <!-- Right Sheet: Deconstruction Workspace -->
+                <main class="page-sheet right-sheet">
+                    <div class="subview" id="viewDeconstructDetails">
+                        <div class="deconstruct-placeholder" id="deconstructPlaceholder">
+                            <p class="empty-cart-msg">Select a bound incantation from the left list to inspect and unweave its matrix.</p>
+                        </div>
+
+                        <div class="deconstruct-content hidden" id="deconstructContent">
+                            <div class="deconstruct-spell-header">
+                                <span class="effect-icon-wrap" id="deconSchoolBadge"></span>
+                                <h3 id="deconSpellName">Custom Spell</h3>
+                            </div>
+
+                            <div class="deconstruct-action-wrapper">
+                                <button type="button" class="skyrim-action-btn deconstruct-btn" id="executeDeconstructBtn">
+                                    DECONSTRUCT
+                                </button>
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="deconstruct-breakdown">
+                                <div class="breakdown-meta-row">
+                                    <span class="meta-tag" id="deconCastingType">Fire and Forget</span>
+                                    <span class="meta-tag" id="deconDeliveryType">Aimed</span>
+                                    <span class="meta-tag" id="deconFormId">0xFF001000</span>
+                                </div>
+                                <div class="breakdown-list-title">Composed Matrices:</div>
+                                <ul class="deconstruct-effects-list" id="deconEffectsList">
+                                    <!-- Populated dynamically -->
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <footer class="cart-summary-bar">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="deconstruct-notice">* Unweaving a spell permanently purges it from your spellbook.</span>
+                            <button type="button" class="skyrim-action-btn" id="closeDeconMenuBtn" style="flex: 0 0 160px;">CLOSE</button>
+                        </div>
+                    </footer>
+                </main>
+            </div>
+
+            <!-- ======================================================== -->
+            <!-- BOTTOM MODE TABS (STRICTLY CONFINED INSIDE PARCHMENT)     -->
+            <!-- ======================================================== -->
+            <nav class="altar-mode-tabs" aria-label="Mode Tabs">
+                <button type="button" class="tab-btn active" id="tabForgeBtn">
+                    <span class="tab-icon">✦</span> FORGE
+                </button>
+                <div class="tab-divider"></div>
+                <button type="button" class="tab-btn" id="tabDeconstructBtn">
+                    <span class="tab-icon">✧</span> DECONSTRUCT
+                </button>
+            </nav>
+
         </section>
     </div>
 

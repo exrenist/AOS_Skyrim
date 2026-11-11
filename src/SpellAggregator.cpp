@@ -6,6 +6,7 @@ namespace Spellmaking
 {
     namespace
     {
+        // Escapes strings safely for JSON transmission
         std::string EscapeJsonString(const std::string& a_input)
         {
             std::ostringstream ss;
@@ -24,6 +25,7 @@ namespace Spellmaking
             return ss.str();
         }
 
+        // Resolves authentic Oblivion-style fallback descriptions
         [[nodiscard]] std::string ResolveFallbackDescription(const std::string& a_name, RE::ActorValue a_school = RE::ActorValue::kNone)
         {
             const auto lowerName = [&]() {
@@ -32,35 +34,47 @@ namespace Spellmaking
                 return s;
             }();
 
-            if (lowerName.find("fire") != std::string::npos || lowerName.find("flame") != std::string::npos) {
+            if (lowerName.find("fire") != std::string::npos || lowerName.find("flame") != std::string::npos || lowerName.find("burn") != std::string::npos) {
                 return "Engulfs targets in searing flames, dealing fire damage and causing extra damage while burning.";
             }
-            if (lowerName.find("frost") != std::string::npos || lowerName.find("ice") != std::string::npos || lowerName.find("cold") != std::string::npos) {
+            if (lowerName.find("frost") != std::string::npos || lowerName.find("ice") != std::string::npos || lowerName.find("blizzard") != std::string::npos || lowerName.find("freeze") != std::string::npos) {
                 return "Strikes targets with biting cold, dealing frost damage to Health and Stamina while slowing movement.";
             }
-            if (lowerName.find("shock") != std::string::npos || lowerName.find("lightning") != std::string::npos) {
+            if (lowerName.find("shock") != std::string::npos || lowerName.find("lightning") != std::string::npos || lowerName.find("spark") != std::string::npos) {
                 return "Discharges electrical lightning, dealing shock damage to Health and half as much to Magicka.";
             }
-            if (lowerName.find("heal") != std::string::npos || lowerName.find("restore") != std::string::npos) {
+            if (lowerName.find("heal") != std::string::npos || lowerName.find("restore") != std::string::npos || lowerName.find("cure") != std::string::npos) {
                 return "Channels restorative divine light, healing the target's wounds and replenishing vitality.";
             }
-            if (lowerName.find("fury") != std::string::npos || lowerName.find("frenzy") != std::string::npos) {
-                return "Induces uncontrollable bloodlust, compelling creatures and people to attack anyone nearby.";
+            if (lowerName.find("fury") != std::string::npos) {
+                return "Induces blind rage, compelling creatures and people up to level 6 to attack anyone nearby.";
             }
-            if (lowerName.find("fear") != std::string::npos || lowerName.find("rout") != std::string::npos) {
-                return "Strikes primal terror into hearts, compelling targets to flee from combat.";
+            if (lowerName.find("frenzy") != std::string::npos || lowerName.find("mayhem") != std::string::npos) {
+                return "Induces uncontrollable bloodlust, compelling creatures and people in the area to attack anyone nearby.";
             }
-            if (lowerName.find("calm") != std::string::npos || lowerName.find("pacify") != std::string::npos) {
+            if (lowerName.find("fear") != std::string::npos) {
+                return "Strikes primal terror into the target's heart, compelling them to flee from combat.";
+            }
+            if (lowerName.find("rout") != std::string::npos || lowerName.find("hysteria") != std::string::npos) {
+                return "Strikes mass panic into hearts, compelling creatures and people in the area to flee from combat.";
+            }
+            if (lowerName.find("calm") != std::string::npos || lowerName.find("pacify") != std::string::npos || lowerName.find("harmony") != std::string::npos) {
                 return "Soothes agitated targets with peaceful resonance, preventing them from fighting.";
             }
             if (lowerName.find("courage") != std::string::npos || lowerName.find("rally") != std::string::npos) {
-                return "Inspires allies with arcane valor, bolstering combat morale.";
+                return "Inspires allies with arcane valor, preventing them from fleeing and bolstering combat morale.";
             }
             if (lowerName.find("paraly") != std::string::npos) {
-                return "Renders the target completely rigid and unable to move or act.";
+                return "Renders the target completely rigid and unable to move or act for the duration.";
             }
             if (lowerName.find("invis") != std::string::npos) {
-                return "Bends light around the caster, rendering them entirely unseen.";
+                return "Bends light around the caster, rendering them entirely unseen until interaction.";
+            }
+            if (lowerName.find("trap") != std::string::npos) {
+                return "Weaves an ethereal tether, capturing the target's soul in an empty gem if slain.";
+            }
+            if (lowerName.find("ward") != std::string::npos) {
+                return "Manifests an arcane aegis that absorbs incoming spell damage and fortifies armor.";
             }
 
             if (a_school == RE::ActorValue::kDestruction) {
@@ -70,9 +84,9 @@ namespace Spellmaking
             } else if (a_school == RE::ActorValue::kIllusion) {
                 return "Manipulates the target's perception, emotions, and psychic state.";
             } else if (a_school == RE::ActorValue::kConjuration) {
-                return "Commands the planes of Oblivion to summon minions or trap souls.";
+                return "Commands the planes of Oblivion to summon minions, bound weapons, or trap souls.";
             } else {
-                return "Bends the laws of nature to manipulate matter and physical reality.";
+                return "Bends the laws of nature to manipulate matter, armor, and physical reality.";
             }
         }
     }
@@ -106,7 +120,7 @@ namespace Spellmaking
 
                 auto* mgef = effectItem->baseEffect;
 
-                // Strip internal engine helper effects
+                // Eliminate engine internal helper effects (kHideInUI)
                 if (mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI)) {
                     continue;
                 }
@@ -129,21 +143,49 @@ namespace Spellmaking
                 }
                 processedMGEFs.push_back(mgef);
 
+                // Multi-Tier Magic School Resolution (Fix for Apocalypse & Modded Spells)
+                const auto primaryAV = mgef->data.primaryAV;
+                const auto spellSkill = spell->GetAssociatedSkill();
+
                 std::string schoolStr = "Alteration";
-                if (mgef->data.primaryAV == RE::ActorValue::kDestruction) {
+
+                if (primaryAV == RE::ActorValue::kDestruction || spellSkill == RE::ActorValue::kDestruction) {
                     schoolStr = "Destruction";
-                } else if (mgef->data.primaryAV == RE::ActorValue::kRestoration) {
+                } else if (primaryAV == RE::ActorValue::kRestoration || spellSkill == RE::ActorValue::kRestoration) {
                     schoolStr = "Restoration";
-                } else if (mgef->data.primaryAV == RE::ActorValue::kIllusion) {
+                } else if (primaryAV == RE::ActorValue::kIllusion || spellSkill == RE::ActorValue::kIllusion) {
                     schoolStr = "Illusion";
-                } else if (mgef->data.primaryAV == RE::ActorValue::kConjuration) {
+                } else if (primaryAV == RE::ActorValue::kConjuration || spellSkill == RE::ActorValue::kConjuration) {
                     schoolStr = "Conjuration";
+                } else if (primaryAV == RE::ActorValue::kAlteration || spellSkill == RE::ActorValue::kAlteration) {
+                    schoolStr = "Alteration";
+                } else {
+                    // Deep Keyword Inspection for complex scripted archetype effects (Apocalypse, Mysticism, CC)
+                    if (spell->HasKeywordString("MagicDestruction") || spell->HasKeywordString("MagicDamageFire") ||
+                        spell->HasKeywordString("MagicDamageFrost") || spell->HasKeywordString("MagicDamageShock") ||
+                        spell->HasKeywordString("WB_Destruction") || mgef->HasKeywordString("MagicDestruction") ||
+                        mgef->HasKeywordString("MagicDamageFire") || mgef->HasKeywordString("MagicDamageFrost") ||
+                        mgef->HasKeywordString("MagicDamageShock") || mgef->HasKeywordString("WB_Destruction")) {
+                        schoolStr = "Destruction";
+                    } else if (spell->HasKeywordString("MagicRestoration") || mgef->HasKeywordString("MagicRestoration") ||
+                               spell->HasKeywordString("WB_Restoration") || mgef->HasKeywordString("WB_Restoration")) {
+                        schoolStr = "Restoration";
+                    } else if (spell->HasKeywordString("MagicConjuration") || mgef->HasKeywordString("MagicConjuration") ||
+                               spell->HasKeywordString("WB_Conjuration") || mgef->HasKeywordString("WB_Conjuration")) {
+                        schoolStr = "Conjuration";
+                    } else if (spell->HasKeywordString("MagicIllusion") || mgef->HasKeywordString("MagicIllusion") ||
+                               spell->HasKeywordString("WB_Illusion") || mgef->HasKeywordString("WB_Illusion")) {
+                        schoolStr = "Illusion";
+                    } else {
+                        schoolStr = "Alteration";
+                    }
                 }
 
                 std::string castTypeStr = (mgef->data.castingType == RE::MagicSystem::CastingType::kConcentration)
                     ? "Concentration"
                     : "FireAndForget";
 
+                // Strict Delivery: Self or Aimed
                 std::vector<std::string> targetTypes;
                 if (mgef->data.delivery == RE::MagicSystem::Delivery::kSelf) {
                     targetTypes.push_back("Self");
@@ -153,28 +195,26 @@ namespace Spellmaking
 
                 std::string finalDesc = mgef->magicItemDescription.c_str();
                 if (finalDesc.empty() || finalDesc.find("<") != std::string::npos) {
-                    finalDesc = ResolveFallbackDescription(fullName, mgef->data.primaryAV);
+                    finalDesc = ResolveFallbackDescription(fullName, primaryAV);
                 }
 
+                // Projectile and Area capabilities
                 const bool isSingleTargetBolt = (fullName.find("bolt") != std::string::npos) || 
                                                 (fullName.find("Spike") != std::string::npos) ||
                                                 (fullName.find("Bite") != std::string::npos);
 
-                const bool inherentlyArea = (mgef->data.explosion != nullptr) || 
+                const bool isFury = (fullName.find("Fury") != std::string::npos);
+
+                const bool inherentlyArea = !isFury && ((mgef->data.explosion != nullptr) || 
                                             (fullName.find("Ball") != std::string::npos) ||
                                             (fullName.find("Storm") != std::string::npos) ||
                                             (fullName.find("Rout") != std::string::npos) ||
                                             (fullName.find("Frenzy") != std::string::npos) ||
                                             (fullName.find("Mayhem") != std::string::npos) ||
                                             (fullName.find("Hysteria") != std::string::npos) ||
-                                            (fullName.find("Harmony") != std::string::npos);
+                                            (fullName.find("Harmony") != std::string::npos));
 
-                const bool supportsArea = !isSingleTargetBolt && (inherentlyArea || effectItem->effectItem.area > 0);
-
-                // Harvest original parameters to enforce as hard-caps
-                const float origMag = effectItem->effectItem.magnitude;
-                const std::uint32_t origDur = effectItem->effectItem.duration;
-                const std::uint32_t origArea = effectItem->effectItem.area;
+                const bool supportsArea = !isSingleTargetBolt && !isFury && (inherentlyArea || effectItem->effectItem.area > 0);
 
                 DiscoveredEffect discovered;
                 discovered.effectSetting = mgef;
@@ -185,18 +225,13 @@ namespace Spellmaking
                 discovered.allowedTargetTypes = targetTypes;
                 discovered.description = finalDesc;
                 discovered.supportsArea = supportsArea;
-                discovered.defaultArea = inherentlyArea ? (origArea > 0 ? origArea : 15) : 0;
-
-                // Enforce hard-caps: If the original spell required duration for script lifecycle, clamp to at least original duration
-                discovered.minMagnitude = origMag > 0.0f ? origMag : 1.0f;
-                discovered.minDuration = origDur > 0 ? origDur : 0;
-                discovered.minArea = origArea;
+                discovered.defaultArea = inherentlyArea ? (effectItem->effectItem.area > 0 ? effectItem->effectItem.area : 15) : 0;
 
                 result.push_back(discovered);
             }
         }
 
-        SKSE::log::info("SpellAggregator: Discovered {} pure player-craftable effects with hardcap baselines.", result.size());
+        SKSE::log::info("SpellAggregator: Discovered {} pure player-craftable effects with descriptions.", result.size());
         return result;
     }
 
@@ -216,10 +251,6 @@ namespace Spellmaking
             ss << "\"description\":\"" << EscapeJsonString(fx.description) << "\",";
             ss << "\"supportsArea\":" << (fx.supportsArea ? "true" : "false") << ",";
             ss << "\"defaultArea\":" << fx.defaultArea << ",";
-            // Hard-cap metadata sent to UI sliders
-            ss << "\"minMagnitude\":" << fx.minMagnitude << ",";
-            ss << "\"minDuration\":" << fx.minDuration << ",";
-            ss << "\"minArea\":" << fx.minArea << ",";
 
             ss << "\"allowedTargetTypes\":[";
             for (std::size_t j = 0; j < fx.allowedTargetTypes.size(); ++j) {

@@ -3,50 +3,75 @@
 #include "pch.h"
 #include "SpellFactory.h"
 #include <vector>
+#include <string>
+#include <cstdint>
 
 namespace Spellmaking
 {
-    // Encapsulates a persisted spell recipe alongside its runtime dynamic FormID
-    struct TrackedSpellEntry
+    // Holds the runtime blueprint of a crafted custom spell
+    struct CustomSpellRecord
     {
-        RE::FormID spellFormID{ 0 };
-        SpellCreationParams params;
+        RE::FormID formID{ 0 };
+        std::string spellName;
+        std::string schoolName{ "Destruction" };
+        std::string castTypeStr{ "FireAndForget" };
+        std::string targetTypeStr{ "Aimed" };
+        uint32_t totalMagickaCost{ 0 };
+        uint32_t totalGoldCost{ 0 };
+
+        struct EffectRecord
+        {
+            RE::FormID effectSettingFormID{ 0 };
+            std::string effectName;
+            float magnitude{ 0.0f };
+            uint32_t duration{ 0 };
+            uint32_t areaFeet{ 0 };
+        };
+
+        std::vector<EffectRecord> effects;
     };
 
     class Serialization
     {
     public:
-        // Registers custom record types with the SKSE serialization interface
+        // Unique 4-character SKSE Co-Save record type identifier
+        static constexpr uint32_t kSpellRecordType = 'SPMK';
+        static constexpr uint32_t kCurrentSaveVersion = 3;
+
+        // Registers SKSE serialization interface listeners
         static void Register();
 
-        // Tracks a dynamically forged spell and registers its FormID to historical purge cache
-        static void TrackCreatedSpell(const SpellCreationParams& a_params, RE::SpellItem* a_spell = nullptr);
-
-        // Instantiates clean spells and purges legacy duplicates after .ess loads (kPostLoadGame)
+        // Lifecycle hook called on kPostLoadGame to reconstruct custom spells in memory without duplicates
         static void ApplyPendingSpells();
 
-        // Cleans up spell allocations when starting a brand new playthrough (kNewGame)
+        // Lifecycle hook called on kNewGame to reset all custom spell trackers
         static void OnNewGame();
 
-        // Serialization callbacks
-        static void OnSave(SKSE::SerializationInterface* a_serde);
-        static void OnLoad(SKSE::SerializationInterface* a_serde);
-        static void OnRevert(SKSE::SerializationInterface* a_serde);
+        // Adds a newly forged spell to memory tracking
+        static void TrackCustomSpell(const CustomSpellRecord& a_record);
+
+        // Overload bridging SpellCreationParams for PapyrusInterface legacy calls
+        static void TrackCreatedSpell(const SpellCreationParams& a_params, RE::SpellItem* a_spell = nullptr);
+
+        // Deconstructs and purges a custom spell from runtime memory and co-save
+        static bool DeleteCustomSpell(RE::FormID a_formID);
+
+        // Serializes all currently active player-crafted spells into a JSON array for PrismaUI
+        static std::string GetActiveSpellsJson();
+
+        // SKSE Co-Save serialization lifecycle callbacks
+        static void OnSave(SKSE::SerializationInterface* a_intfc);
+        static void OnLoad(SKSE::SerializationInterface* a_intfc);
+        static void OnRevert(SKSE::SerializationInterface* a_intfc);
 
     private:
-        // Purges all historical and loaded dynamic forms from the player character
+        // Strips any ghost spells loaded into the player by the engine's .ess save file before instantiating
         static void PurgePlayerCustomSpells();
 
-        static constexpr std::uint32_t kSerializationVersion = 3; // Version 3 includes runtime FormID tracking
-        static constexpr std::uint32_t kSpellRecordType = 'SPEU';
+        // Active custom spells bound to the current playthrough session
+        static inline std::vector<CustomSpellRecord> s_activeCustomSpells;
 
-        // Recipes loaded from co-save waiting for post-load engine synchronization
-        static inline std::vector<TrackedSpellEntry> s_pendingSpells;
-
-        // Current active recipes persisted across saves
-        static inline std::vector<TrackedSpellEntry> s_trackedSpells;
-
-        // Cumulative registry of all dynamic FormIDs ever forged in this session to prevent reload multiplication
+        // Historical FormID graveyard to prevent form duplication or ghosting across reload cycles
         static inline std::vector<RE::FormID> s_allHistoricalFormIDs;
     };
 }

@@ -70,6 +70,23 @@ namespace Spellmaking
 
             return RE::TESForm::LookupByID<RE::BGSProjectile>(projFormID);
         }
+
+        // Safely resolves the authentic EitherHand BGSEquipSlot from vanilla player spells
+        [[nodiscard]] RE::BGSEquipSlot* ResolveEitherHandEquipSlot()
+        {
+            // Query vanilla Flames (0x00012FCD), Healing (0x00012FCC), or Firebolt (0x00012F03)
+            static constexpr RE::FormID kVanillaHandSpells[] = { 0x00012FCD, 0x00012FCC, 0x00012F03 };
+            for (const auto spellID : kVanillaHandSpells) {
+                if (auto* vanillaSpell = RE::TESForm::LookupByID<RE::SpellItem>(spellID)) {
+                    if (vanillaSpell->equipSlot) {
+                        return vanillaSpell->equipSlot;
+                    }
+                }
+            }
+
+            // Fallback: Skyrim.esm EitherHand EquipSlot FormID is 0x00013F44
+            return RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x00013F44);
+        }
     }
 
     void SpellFactory::CloneConditions(RE::TESCondition& a_dest, const RE::TESCondition& a_src)
@@ -95,13 +112,46 @@ namespace Spellmaking
         }
     }
 
+    void SpellFactory::InheritKeywords(RE::SpellItem* a_spell, const std::vector<CustomEffectParam>& a_effects)
+    {
+        if (!a_spell) {
+            return;
+        }
+
+        std::vector<RE::BGSKeyword*> collectedKeywords;
+
+        for (const auto& fx : a_effects) {
+            if (!fx.effectSetting) {
+                continue;
+            }
+
+            const auto numKw = fx.effectSetting->GetNumKeywords();
+            for (std::uint32_t i = 0; i < numKw; ++i) {
+                if (const auto optKw = fx.effectSetting->GetKeywordAt(i); optKw.has_value()) {
+                    auto* kw = optKw.value();
+                    if (kw && std::find(collectedKeywords.begin(), collectedKeywords.end(), kw) == collectedKeywords.end()) {
+                        collectedKeywords.push_back(kw);
+                    }
+                }
+            }
+        }
+
+        if (!collectedKeywords.empty()) {
+            auto** kwArray = RE::calloc<RE::BGSKeyword*>(collectedKeywords.size());
+            for (std::size_t i = 0; i < collectedKeywords.size(); ++i) {
+                kwArray[i] = collectedKeywords[i];
+            }
+            a_spell->keywords = kwArray;
+            a_spell->numKeywords = static_cast<std::uint32_t>(collectedKeywords.size());
+        }
+    }
+
     std::uint32_t SpellFactory::CalculateCost(RE::EffectSetting* a_mgef, float a_magnitude, std::uint32_t a_duration, std::uint32_t a_area)
     {
         if (!a_mgef) {
             return 10;
         }
 
-        // Vanilla Skyrim engine formula: Cost = BaseCost * Mag^1.1 * (Dur/10)^1.1 * (Area*0.1) * 0.5
         const float baseCost = (std::max)(1.0f, a_mgef->data.baseCost);
         const float magFactor = (a_magnitude > 0.0f && !a_mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kNoMagnitude)) 
             ? std::pow(a_magnitude, 1.1f) : 1.0f;
@@ -135,12 +185,16 @@ namespace Spellmaking
             return nullptr;
         }
 
+        spell->formFlags |= RE::TESForm::RecordFlags::kInitialized;
         spell->fullName = a_params.spellName.c_str();
         spell->data.spellType = RE::MagicSystem::SpellType::kSpell;
         spell->data.delivery = a_params.deliveryType;
         spell->data.castingType = a_params.castingType;
         spell->data.chargeTime = a_params.chargeTime;
         spell->data.castingPerk = nullptr;
+
+        // Assign genuine EitherHand equip slot so both Left ("L") and Right ("R") hands work in FavoritesMenu
+        spell->equipSlot = ResolveEitherHandEquipSlot();
 
         auto sortedEffects = a_params.effects;
         std::stable_sort(sortedEffects.begin(), sortedEffects.end(), [](const CustomEffectParam& a, const CustomEffectParam& b) {
@@ -321,7 +375,6 @@ namespace Spellmaking
 
             const std::uint32_t singleCost = CalculateCost(fx.effectSetting, clampedMagnitude, clampedDuration, effectItem->effectItem.area);
 
-            // Clean, non-inflated cost scaling without 2000.0f hack
             if (effectIndex == 0) {
                 effectItem->cost = static_cast<float>(singleCost + 1);
                 totalActualCost += singleCost;
@@ -334,7 +387,7 @@ namespace Spellmaking
             effectIndex++;
         }
 
-        // 5. Universal Companion Effect Preserver
+        // 5. Universal Companion Effect Preserver (Apocalypse / Modded Spells)
         if (dataHandler) {
             for (const auto& fx : sortedEffects) {
                 if (!fx.effectSetting) continue;
@@ -394,8 +447,9 @@ namespace Spellmaking
 
         a_player->AddSpell(spell);
 
-        SKSE::log::info("SpellFactory: Successfully forged composite spell '{}' (FormID: 0x{:08X}) with {} effects. Balanced Cost: {}",
-            a_params.spellName, static_cast<std::uint32_t>(spell->GetFormID()), spell->effects.size(), spell->data.costOverride);
+        SKSE::log::info("SpellFactory: Successfully forged composite spell '{}' (FormID: 0x{:08X}) with {} effects, equipSlot: {:08X}, Balanced Cost: {}",
+            a_params.spellName, static_cast<std::uint32_t>(spell->GetFormID()), spell->effects.size(),
+            spell->equipSlot ? spell->equipSlot->GetFormID() : 0, spell->data.costOverride);
 
         return spell;
     }

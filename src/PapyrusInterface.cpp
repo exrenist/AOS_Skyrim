@@ -32,11 +32,10 @@ namespace Spellmaking
         testParams.deliveryType = RE::MagicSystem::Delivery::kAimed;
         testParams.castingType = RE::MagicSystem::CastingType::kFireAndForget;
         testParams.chargeTime = 0.5f;
-        testParams.effects.push_back({ availableEffects[0].effectSetting, 25.0f, 0, 5 });
+        testParams.effects.emplace_back(availableEffects[0].effectSetting, 25.0f, 0u, 5u);
 
         auto* spell = SpellFactory::CreateSpell(testParams, player);
         if (spell) {
-            // Track recipe and pass live pointer to prevent duplicate stacking
             Serialization::TrackCreatedSpell(testParams, spell);
             return true;
         }
@@ -55,7 +54,7 @@ namespace Spellmaking
         a_vm->RegisterFunction("OpenAltarMenu"sv, scriptName, OpenAltarMenu);
         a_vm->RegisterFunction("QuickTestCraftSpell"sv, scriptName, QuickTestCraftSpell);
 
-        SKSE::log::info("PapyrusInterface: Successfully bound native functions for '{}'.", scriptName);
+        SKSE::log::info("[PapyrusInterface] Successfully bound native functions for '{}'.", scriptName);
         return true;
     }
 }

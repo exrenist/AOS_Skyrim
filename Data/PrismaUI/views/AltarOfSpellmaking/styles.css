@@ -1,8 +1,8 @@
 /**
  * ============================================================================
  * Altar of Spellmaking - High-Resolution Medieval Parchment Theme
- * Natural Standard Cursor Architecture (Zero Custom-Cursor Reflow Overhead)
- * Authentic Skyrim Bronze Scrollbar & Dynamic Slider Transitions
+ * Natural Standard Cursor Architecture & Authentic Skyrim Bronze Scrollbar
+ * Authentic SVG Magic School Color Filters (Preserved Exactly from Working Base)
  * ============================================================================
  */
 
@@ -86,6 +86,8 @@ body {
     display: flex;
     flex-direction: column;
     padding: 3.4rem 4.6rem 2.8rem 5.2rem;
+    position: relative;
+    overflow: hidden;
     transform: translateZ(0);
     cursor: default;
 }
@@ -216,7 +218,8 @@ body {
     transform: translateX(3px);
 }
 
-.effect-item.selected {
+.effect-item.selected,
+.effect-item.active {
     background: rgba(223, 186, 115, 0.42);
     border-left-color: var(--color-gold);
     border-color: #ffffff;
@@ -226,11 +229,14 @@ body {
 .effect-item.incompatible {
     opacity: 0.3;
     cursor: not-allowed !important;
+    pointer-events: none !important;
     background: rgba(0, 0, 0, 0.2) !important;
     transform: none !important;
 }
 
-/* SCHOOL SVG ICONS: Pure Color Filters for White 255,255,255 SVGs */
+/* ==========================================================================
+   ORIGINAL SCHOOL SVG ICONS & COLOR FILTERS (RESTORED EXACTLY)
+   ========================================================================== */
 .effect-icon-wrap {
     width: 1.7rem;
     height: 1.7rem;
@@ -274,7 +280,8 @@ body {
     border-top: 1px solid rgba(223, 186, 115, 0.35);
 }
 
-.currency-box {
+.currency-box,
+.spell-count-box {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -557,6 +564,7 @@ body {
 .range-btn.disabled-locked {
     opacity: 0.2;
     cursor: not-allowed !important;
+    pointer-events: none !important;
     background: rgba(0, 0, 0, 0.4);
     border-color: rgba(255, 255, 255, 0.05);
     color: #666;
@@ -706,19 +714,218 @@ body {
     visibility: hidden !important;
 }
 
-/* Disabled Duplicate & Locked Effects */
-.effect-item.disabled-duplicate {
-    opacity: 0.35;
-    filter: grayscale(85%);
+.hidden {
+    display: none !important;
+}
+
+/* ==========================================================================
+   STRICT DUPLICATE PREVENTION: Absolute In-Game & Web Locking
+   ========================================================================== */
+.effect-item.disabled-duplicate,
+.effect-item.already-added {
+    opacity: 0.35 !important;
+    filter: grayscale(85%) !important;
     cursor: not-allowed !important;
-    pointer-events: none;
-    border-left: 3px solid rgba(180, 140, 60, 0.2);
+    pointer-events: none !important;
+    border-left: 3px solid rgba(180, 140, 60, 0.2) !important;
+    transform: none !important;
+}
+
+.effect-item.disabled-duplicate *,
+.effect-item.already-added * {
+    pointer-events: none !important;
+}
+
+.cart-lock-tag {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: var(--color-gold);
+    border: 1px solid rgba(223, 186, 115, 0.45);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
 }
 
 .effect-item.disabled-locked {
     opacity: 0.25;
     filter: grayscale(100%);
     cursor: not-allowed !important;
-    pointer-events: none;
+    pointer-events: none !important;
     border-left: 3px solid #8b0000;
+}
+
+/* ==========================================================================
+   DECONSTRUCT VIEW LAYOUT & BOTTOM TABS
+   ========================================================================== */
+.deconstruct-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 250px;
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.deconstruct-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.deconstruct-spell-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    margin-top: 0.2rem;
+}
+
+.deconstruct-spell-header h3 {
+    font-size: 1.4rem;
+    color: var(--color-gold);
+    font-weight: bold;
+    text-shadow: 2px 2px 4px #000000;
+}
+
+.deconstruct-action-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0.6rem 0 0.4rem 0;
+}
+
+.skyrim-action-btn.deconstruct-btn {
+    background: linear-gradient(180deg, #7a1515 0%, #3a0808 100%);
+    border: 1px solid #d32f2f;
+    color: #ffffff;
+    padding: 0.55rem 2rem;
+    font-size: 1.05rem;
+    box-shadow: 0 0 10px rgba(211, 47, 47, 0.4);
+}
+
+.skyrim-action-btn.deconstruct-btn:hover {
+    background: linear-gradient(180deg, #a81c1c 0%, #540c0c 100%);
+    box-shadow: 0 0 16px rgba(255, 60, 60, 0.7);
+}
+
+.deconstruct-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 0.4rem;
+}
+
+.breakdown-meta-row {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: center;
+}
+
+.meta-tag {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(223, 186, 115, 0.35);
+    border-radius: 3px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.82rem;
+    color: var(--color-gold);
+}
+
+.breakdown-list-title {
+    font-size: 0.95rem;
+    color: #d6ccba;
+    font-weight: bold;
+    border-bottom: 1px solid rgba(223, 186, 115, 0.3);
+    padding-bottom: 0.25rem;
+}
+
+.deconstruct-effects-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.deconstruct-fx-card {
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(223, 186, 115, 0.3);
+    border-radius: 3px;
+    padding: 0.5rem 0.8rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.fx-card-title {
+    font-size: 0.98rem;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.fx-card-stats {
+    font-size: 0.85rem;
+    color: var(--color-gold);
+}
+
+.deconstruct-notice {
+    font-size: 0.78rem;
+    color: #a49b8a;
+    font-style: italic;
+    max-width: 68%;
+}
+
+.altar-mode-tabs {
+    position: absolute;
+    bottom: 0.35rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    background: rgba(14, 11, 8, 0.92);
+    border: 1px solid rgba(223, 186, 115, 0.45);
+    border-radius: 4px;
+    padding: 0.3rem 1.4rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.85);
+    z-index: 100;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: #a8987b;
+    font-family: 'Sovngarde', serif;
+    font-size: 0.95rem;
+    font-weight: bold;
+    letter-spacing: 0.14em;
+    padding: 0.25rem 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tab-btn:hover {
+    color: var(--color-gold);
+    transform: translateY(-1px);
+}
+
+.tab-btn.active {
+    color: #ffffff;
+    text-shadow: 0 0 10px rgba(223, 186, 115, 0.9);
+    border-bottom: 2px solid var(--color-gold);
+}
+
+.tab-btn .tab-icon {
+    color: var(--color-gold);
+}
+
+.tab-divider {
+    width: 1px;
+    height: 16px;
+    background: rgba(223, 186, 115, 0.35);
 }

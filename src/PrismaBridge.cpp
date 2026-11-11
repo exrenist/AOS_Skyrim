@@ -3,406 +3,341 @@
 #include "SpellFactory.h"
 #include "Serialization.h"
 #include "RE/B/BSAudioManager.h"
-#include <regex>
+#include <format>
 #include <sstream>
-#include <iomanip>
+#include <algorithm>
 
 namespace Spellmaking
 {
-    namespace
+    void PrismaBridge::ShowHUDMessage(const char* a_message)
     {
-        RE::BGSSoundDescriptorForm* s_soundHover{ nullptr };
-        RE::BGSSoundDescriptorForm* s_soundClick{ nullptr };
-        RE::BGSSoundDescriptorForm* s_soundCancel{ nullptr };
-        RE::BGSSoundDescriptorForm* s_soundGold{ nullptr };
-        bool s_soundsInitialized{ false };
-
-        void EnsureSoundsInitialized()
-        {
-            if (s_soundsInitialized) {
-                return;
-            }
-
-            if (auto* goldItem = RE::TESForm::LookupByID<RE::TESObjectMISC>(0x0000000F)) {
-                s_soundGold = goldItem->putdownSound;
-            }
-            if (!s_soundGold) {
-                s_soundGold = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(0x0003E955);
-            }
-
-            s_soundHover  = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(0x0003C759);
-            s_soundClick  = s_soundHover;
-            s_soundCancel = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(0x0003C75A);
-
-            s_soundsInitialized = true;
-            SKSE::log::info("PrismaBridge: Audio Engine Bound -> Hover: 0x{:08X}, Click: 0x{:08X}, Cancel: 0x{:08X}, Gold: 0x{:08X}",
-                s_soundHover  ? s_soundHover->GetFormID()  : 0,
-                s_soundClick  ? s_soundClick->GetFormID()  : 0,
-                s_soundCancel ? s_soundCancel->GetFormID() : 0,
-                s_soundGold   ? s_soundGold->GetFormID()   : 0);
-        }
-
-        void PlayDescriptor(RE::BGSSoundDescriptorForm* a_descriptor)
-        {
-            if (!a_descriptor) {
-                return;
-            }
-
-            auto* audioManager = RE::BSAudioManager::GetSingleton();
-            if (audioManager) {
-                audioManager->Play(a_descriptor->GetFormID());
-            }
-        }
-
-        std::int32_t GetTruePlayerGold(RE::PlayerCharacter* a_player)
-        {
-            if (!a_player) return 0;
-            auto* goldForm = RE::TESForm::LookupByID<RE::TESBoundObject>(0x0000000F);
-            if (!goldForm) return 0;
-
-            const auto inv = a_player->GetInventory();
-            const auto it = inv.find(goldForm);
-            if (it != inv.end()) {
-                return it->second.first;
-            }
-
-            const auto rawCount = a_player->GetItemCount(goldForm);
-            return static_cast<std::int32_t>(static_cast<std::uint32_t>(rawCount) & 0x7FFFFFFF);
-        }
-
-        void DeductPlayerGold(RE::PlayerCharacter* a_player, std::int32_t a_amount)
-        {
-            if (!a_player || a_amount <= 0) {
-                return;
-            }
-
-            auto* goldItem = RE::TESForm::LookupByID<RE::TESBoundObject>(0x0000000F);
-            if (!goldItem) {
-                return;
-            }
-
-            a_player->RemoveItem(goldItem, a_amount, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
-
-            if (auto* invChanges = a_player->GetInventoryChanges()) {
-                invChanges->SendContainerChangedEvent(nullptr, a_player, goldItem, a_amount);
-            }
-
-            EnsureSoundsInitialized();
-            PlayDescriptor(s_soundGold);
-        }
+        // Address Library ID 52058 (1.5.97) / 52933 (1.6.x+) for native HUD notification
+        using ShowNotification_t = void(*)(const char*, const char*, bool);
+        static REL::Relocation<ShowNotification_t> ShowNotification{ RELOCATION_ID(52058, 52933) };
+        ShowNotification(a_message, nullptr, true);
     }
 
-    void PrismaBridge::InitializeAPI()
+    void PrismaBridge::PlayUIAudio(const std::string& a_soundName)
     {
-        if (s_prismaUI) {
+        auto* audioManager = RE::BSAudioManager::GetSingleton();
+        if (!audioManager) {
             return;
         }
 
-        s_prismaUI = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI1>();
-
-        if (s_prismaUI) {
-            SKSE::log::info("PrismaBridge: Successfully bound official PrismaUI v1 interface.");
-        } else {
-            SKSE::log::error("PrismaBridge: PrismaUI runtime API not available. Ensure PrismaUI.dll is active.");
-        }
-    }
-
-    void PrismaBridge::Register()
-    {
-        InitializeAPI();
-    }
-
-    void PrismaBridge::ShowHUDNotification(const char* a_message)
-    {
-        using func_t = void(*)(const char*, const char*, bool);
-        static REL::Relocation<func_t> func{ RELOCATION_ID(52058, 52933) };
-        if (func.address()) {
-            func(a_message, nullptr, true);
-        }
-    }
-
-    void PrismaBridge::RefundGold(RE::PlayerCharacter* a_player, std::int32_t a_amount)
-    {
-        if (!a_player || a_amount <= 0) {
-            return;
+        RE::FormID soundID = 0;
+        if (a_soundName == "UIMenuFocus" || a_soundName == "hover") {
+            soundID = 0x0003C759; // UIMenuFocus
+        } else if (a_soundName == "UIMenuOK" || a_soundName == "click") {
+            soundID = 0x0003C759; // UIMenuOK
+        } else if (a_soundName == "UIMenuPrevNext") {
+            soundID = 0x0003C759; // UIMenuPrevNext
+        } else if (a_soundName == "UIMenuCancel" || a_soundName == "cancel") {
+            soundID = 0x0003C75A; // UIMenuCancel
+        } else if (a_soundName == "ITMGoldDown" || a_soundName == "gold") {
+            soundID = 0x0003E955; // ITMGoldDown
+        } else if (a_soundName == "MAGFail" || a_soundName == "fail") {
+            soundID = 0x00010E40; // MAGFail
         }
 
-        auto* gold = RE::TESForm::LookupByID<RE::TESBoundObject>(0x0000000F);
-        if (gold) {
-            a_player->AddObjectToContainer(gold, nullptr, a_amount, nullptr);
-            SKSE::log::info("PrismaBridge: Refunded {} gold to player.", a_amount);
+        if (soundID != 0) {
+            audioManager->Play(soundID);
         }
-    }
-
-    void PrismaBridge::PlaySound(const std::string& a_soundName)
-    {
-        EnsureSoundsInitialized();
-        if (a_soundName == "hover") {
-            PlayDescriptor(s_soundHover);
-        } else if (a_soundName == "click") {
-            PlayDescriptor(s_soundClick);
-        } else if (a_soundName == "cancel") {
-            PlayDescriptor(s_soundCancel);
-        } else if (a_soundName == "gold") {
-            PlayDescriptor(s_soundGold);
-        } else if (a_soundName == "slider") {
-            PlayDescriptor(s_soundHover);
-        }
-    }
-
-    std::string PrismaBridge::BuildPlayerDataJson(std::int32_t a_gold, std::int32_t a_maxMagicka, std::int32_t a_currentMagicka)
-    {
-        return std::format(
-            "{{\"currentGold\":{},\"maxMagicka\":{},\"currentMagicka\":{}}}",
-            a_gold, a_maxMagicka, a_currentMagicka);
-    }
-
-    bool PrismaBridge::OpenMenu(std::int32_t a_playerGold, std::int32_t a_maxMagicka, std::int32_t a_currentMagicka)
-    {
-        if (!s_prismaUI) {
-            InitializeAPI();
-            if (!s_prismaUI) {
-                SKSE::log::error("PrismaBridge: Cannot open menu - PrismaUI API is unavailable.");
-                return false;
-            }
-        }
-
-        EnsureSoundsInitialized();
-        SKSE::log::info("PrismaBridge: Preparing arcane matrix for PrismaUI frontend...");
-
-        const auto discoveredEffects = SpellAggregator::CollectAvailableEffects();
-        s_cachedEffectsJson = SpellAggregator::BuildEffectsJsonPayload(discoveredEffects);
-        s_cachedPlayerDataJson = BuildPlayerDataJson(a_playerGold, a_maxMagicka, a_currentMagicka);
-
-        if (s_view != PRISMA_UI_API::kInvalidView && s_prismaUI->IsValid(s_view)) {
-            SKSE::log::info("PrismaBridge: Reusing active view [{:X}]. Resetting cart, updating and focusing...", s_view);
-            s_prismaUI->Invoke(s_view, "if(window.AltarAPI && window.AltarAPI.resetCart) window.AltarAPI.resetCart();", nullptr);
-            s_prismaUI->Invoke(s_view, std::format("window.AltarAPI.setPlayerData({});", s_cachedPlayerDataJson).c_str(), nullptr);
-            s_prismaUI->Invoke(s_view, std::format("window.AltarAPI.setKnownEffects({});", s_cachedEffectsJson).c_str(), nullptr);
-            s_prismaUI->Show(s_view);
-            s_prismaUI->Focus(s_view, true, false);
-            return true;
-        }
-
-        SKSE::log::info("PrismaBridge: Allocating PrismaView for '{}'...", kViewPath);
-        s_view = s_prismaUI->CreateView(kViewPath, OnDomReady);
-
-        if (s_view == PRISMA_UI_API::kInvalidView) {
-            SKSE::log::error("PrismaBridge: Failed to allocate PrismaView.");
-            return false;
-        }
-
-        s_prismaUI->RegisterJSListener(s_view, "onPlayerCraftSpell", OnCraftSpellDispatched);
-        s_prismaUI->RegisterJSListener(s_view, "onMenuCloseRequested", OnCloseMenuRequested);
-        s_prismaUI->RegisterJSListener(s_view, "onPlayUISound", OnPlayUISoundDispatched);
-
-        SKSE::log::info("PrismaBridge: PrismaView [{:X}] created. Awaiting DOM ready...", s_view);
-        return true;
-    }
-
-    bool PrismaBridge::OpenAltarMenu(std::int32_t a_playerGold, std::int32_t a_maxMagicka, std::int32_t a_currentMagicka)
-    {
-        return OpenMenu(a_playerGold, a_maxMagicka, a_currentMagicka);
     }
 
     void PrismaBridge::OnDomReady(PrismaView a_view)
     {
-        if (!s_prismaUI || a_view != s_view) {
+        if (!s_prismaUI || a_view != s_altarView) {
             return;
         }
 
-        SKSE::log::info("PrismaBridge: View [{:X}] DOM ready. Registering listeners and acquiring focus...", a_view);
+        // Enforce initial double-lock: guarantee the view is completely invisible upon startup
+        s_prismaUI->Hide(a_view);
+        s_prismaUI->Unfocus(a_view);
+        s_prismaUI->Invoke(a_view, "if (window.AltarAPI && window.AltarAPI.closeMenu) window.AltarAPI.closeMenu();", nullptr);
+        SKSE::log::info("[PrismaBridge] View DOM ready confirmed. Initial hidden state successfully enforced.");
+    }
 
-        s_prismaUI->RegisterJSListener(a_view, "onPlayerCraftSpell", OnCraftSpellDispatched);
-        s_prismaUI->RegisterJSListener(a_view, "onMenuCloseRequested", OnCloseMenuRequested);
-        s_prismaUI->RegisterJSListener(a_view, "onPlayUISound", OnPlayUISoundDispatched);
+    bool PrismaBridge::InitializeAPI()
+    {
+        if (s_prismaUI) {
+            return true;
+        }
 
-        s_prismaUI->Invoke(a_view, "if(window.AltarAPI && window.AltarAPI.resetCart) window.AltarAPI.resetCart();", nullptr);
-        s_prismaUI->Invoke(a_view, std::format("window.AltarAPI.setPlayerData({});", s_cachedPlayerDataJson).c_str(), nullptr);
-        s_prismaUI->Invoke(a_view, std::format("window.AltarAPI.setKnownEffects({});", s_cachedEffectsJson).c_str(), nullptr);
+        s_prismaUI = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI1>();
+        if (!s_prismaUI) {
+            SKSE::log::error("[PrismaBridge] PrismaUI.dll API interface not found! Ensure PrismaUI is installed.");
+            return false;
+        }
 
-        s_prismaUI->Show(a_view);
-        s_prismaUI->Focus(a_view, true, false);
+        // Create the persistent Altar View and bind OnDomReady to lock out game launch popups
+        s_altarView = s_prismaUI->CreateView(kViewPath, OnDomReady);
 
-        SKSE::log::info("PrismaBridge: Altar of Spellmaking interface is now live and interactive.");
+        if (s_altarView == PRISMA_UI_API::kInvalidView) {
+            SKSE::log::error("[PrismaBridge] Failed to create PrismaView for {}", kViewPath);
+            return false;
+        }
+
+        // Initial hide immediately after creation
+        s_prismaUI->Hide(s_altarView);
+        s_prismaUI->Unfocus(s_altarView);
+
+        // Register JS -> C++ event listeners
+        s_prismaUI->RegisterJSListener(s_altarView, "onPlayerCraftSpell", [](const char* a_json) {
+            if (a_json) {
+                HandleCraftSpellPayload(a_json);
+            }
+        });
+
+        s_prismaUI->RegisterJSListener(s_altarView, "onPlayerDeconstructSpell", [](const char* a_json) {
+            if (a_json) {
+                HandleDeconstructSpellPayload(a_json);
+            }
+        });
+
+        s_prismaUI->RegisterJSListener(s_altarView, "onPlayUISound", [](const char* a_soundName) {
+            if (a_soundName) {
+                PlayUIAudio(a_soundName);
+            }
+        });
+
+        s_prismaUI->RegisterJSListener(s_altarView, "onMenuCloseRequested", []([[maybe_unused]] const char* a_param) {
+            CloseAltarMenu();
+        });
+
+        SKSE::log::info("[PrismaBridge] Successfully initialized view and registered JS listeners.");
+        return true;
+    }
+
+    bool PrismaBridge::OpenMenu(std::int32_t a_currentGold, std::int32_t a_maxMagicka, std::int32_t a_currentMagicka)
+    {
+        return OpenAltarMenu(a_currentGold, a_maxMagicka, a_currentMagicka);
+    }
+
+    bool PrismaBridge::OpenAltarMenu(std::int32_t a_currentGold, std::int32_t a_maxMagicka, std::int32_t a_currentMagicka)
+    {
+        if (!InitializeAPI() || s_altarView == PRISMA_UI_API::kInvalidView) {
+            ShowHUDMessage("Failed to invoke Altar interface.");
+            return false;
+        }
+
+        // 1. Send Player Economy and Stats
+        std::string playerJson = std::format(
+            "{{\"currentGold\":{},\"maxMagicka\":{},\"currentMagicka\":{}}}",
+            a_currentGold, a_maxMagicka, a_currentMagicka);
+        s_prismaUI->Invoke(s_altarView, std::format("window.AltarAPI.setPlayerData({});", playerJson).c_str(), nullptr);
+
+        // 2. Aggregate and send Known Magic Effects
+        const auto availableEffects = SpellAggregator::CollectAvailableEffects();
+        std::string effectsJson = SpellAggregator::BuildEffectsJsonPayload(availableEffects);
+        s_prismaUI->Invoke(s_altarView, std::format("window.AltarAPI.setKnownEffects({});", effectsJson).c_str(), nullptr);
+
+        // 3. Serialize and send Bound Spells for Deconstruct mode
+        std::string createdSpellsJson = Serialization::GetActiveSpellsJson();
+        s_prismaUI->Invoke(s_altarView, std::format("window.AltarAPI.setCreatedSpells({});", createdSpellsJson).c_str(), nullptr);
+
+        // 4. Reset Cart and open JS window
+        s_prismaUI->Invoke(s_altarView, "if (window.AltarAPI && window.AltarAPI.resetCart) window.AltarAPI.resetCart();", nullptr);
+        s_prismaUI->Invoke(s_altarView, "if (window.AltarAPI && window.AltarAPI.openMenu) window.AltarAPI.openMenu();", nullptr);
+
+        // 5. Reveal View and capture keyboard/mouse focus
+        s_prismaUI->Show(s_altarView);
+        s_prismaUI->Focus(s_altarView, true, false);
+        s_isMenuOpen = true;
+
+        PlayUIAudio("UIMenuOK");
+        SKSE::log::info("[PrismaBridge] Altar menu opened with dual-mode datasets.");
+        return true;
+    }
+
+    void PrismaBridge::CloseAltarMenu()
+    {
+        if (s_prismaUI && s_altarView != PRISMA_UI_API::kInvalidView && s_isMenuOpen) {
+            s_prismaUI->Invoke(s_altarView, "if (window.AltarAPI && window.AltarAPI.closeMenu) window.AltarAPI.closeMenu();", nullptr);
+            s_prismaUI->Invoke(s_altarView, "if (window.AltarAPI && window.AltarAPI.resetCart) window.AltarAPI.resetCart();", nullptr);
+            s_prismaUI->Unfocus(s_altarView);
+            s_prismaUI->Hide(s_altarView);
+            s_isMenuOpen = false;
+            PlayUIAudio("UIMenuCancel");
+            SKSE::log::info("[PrismaBridge] Altar menu closed and focus released.");
+        }
     }
 
     void PrismaBridge::CloseMenu()
     {
-        if (!s_prismaUI || s_view == PRISMA_UI_API::kInvalidView) {
-            return;
-        }
-
-        SKSE::log::info("PrismaBridge: Closing interface, resetting cart state and releasing focus...");
-        s_prismaUI->Invoke(s_view, "if(window.AltarAPI && window.AltarAPI.resetCart) window.AltarAPI.resetCart();", nullptr);
-        s_prismaUI->Unfocus(s_view);
-        s_prismaUI->Hide(s_view);
+        CloseAltarMenu();
     }
 
-    void PrismaBridge::OnCloseMenuRequested(const char*)
+    void PrismaBridge::HandleCraftSpellPayload(const std::string& a_jsonPayload)
     {
-        CloseMenu();
-    }
+        SKSE::log::info("[PrismaBridge] Processing craft payload...");
 
-    void PrismaBridge::OnPlayUISoundDispatched(const char* a_soundName)
-    {
-        if (!a_soundName) return;
-        PlaySound(std::string(a_soundName));
-    }
-
-    void PrismaBridge::OnCraftSpellDispatched(const char* a_payload)
-    {
-        if (!a_payload) {
-            return;
-        }
-
-        SKSE::log::info("PrismaBridge: Received craft payload from frontend.");
-        if (ParseAndExecuteCrafting(a_payload)) {
-            SKSE::log::info("PrismaBridge: Spell crafted successfully. Closing menu...");
-            ShowHUDNotification("Incantation Successfully Forged!");
-            CloseMenu();
-        } else {
-            SKSE::log::warn("PrismaBridge: Crafting could not be completed.");
-        }
-    }
-
-    bool PrismaBridge::ParseAndExecuteCrafting(const std::string& a_jsonPayload)
-    {
         auto* player = RE::PlayerCharacter::GetSingleton();
         if (!player) {
-            return false;
+            return;
         }
 
-        std::regex nameRegex("\"spellName\"\\s*:\\s*\"([^\"]+)\"");
-        std::regex castTypeRegex("\"castType\"\\s*:\\s*\"([^\"]+)\"");
-        std::regex targetTypeRegex("\"targetType\"\\s*:\\s*\"([^\"]+)\"");
-        std::regex goldCostRegex("\"totalGoldCost\"\\s*:\\s*([0-9]+)");
+        auto extractString = [&](const std::string& key) -> std::string {
+            auto pos = a_jsonPayload.find("\"" + key + "\"");
+            if (pos == std::string::npos) return "";
+            auto colon = a_jsonPayload.find(':', pos);
+            if (colon == std::string::npos) return "";
+            auto quote1 = a_jsonPayload.find('"', colon);
+            if (quote1 == std::string::npos) return "";
+            auto quote2 = a_jsonPayload.find('"', quote1 + 1);
+            if (quote2 == std::string::npos) return "";
+            return a_jsonPayload.substr(quote1 + 1, quote2 - quote1 - 1);
+        };
 
-        std::smatch match;
-        std::string spellName = "Custom Incantation";
-        std::string castType = "FireAndForget";
-        std::string targetType = "Aimed";
-        std::int32_t totalGold = 0;
+        auto extractUint = [&](const std::string& key) -> std::uint32_t {
+            auto pos = a_jsonPayload.find("\"" + key + "\"");
+            if (pos == std::string::npos) return 0;
+            auto colon = a_jsonPayload.find(':', pos);
+            if (colon == std::string::npos) return 0;
+            auto valStart = a_jsonPayload.find_first_of("0123456789", colon);
+            if (valStart == std::string::npos) return 0;
+            auto valEnd = a_jsonPayload.find_first_not_of("0123456789", valStart);
+            std::string numStr = a_jsonPayload.substr(valStart, valEnd - valStart);
+            try { return static_cast<std::uint32_t>(std::stoul(numStr)); } catch (...) { return 0; }
+        };
 
-        if (std::regex_search(a_jsonPayload, match, nameRegex)) {
-            spellName = match[1].str();
-        }
-        if (std::regex_search(a_jsonPayload, match, castTypeRegex)) {
-            castType = match[1].str();
-        }
-        if (std::regex_search(a_jsonPayload, match, targetTypeRegex)) {
-            targetType = match[1].str();
-        }
-        if (std::regex_search(a_jsonPayload, match, goldCostRegex)) {
-            totalGold = std::stoi(match[1].str());
-        }
+        std::string spellName = extractString("spellName");
+        if (spellName.empty()) spellName = "Custom Incantation";
 
-        const std::int32_t currentGold = GetTruePlayerGold(player);
-
-        if (currentGold < totalGold) {
-            SKSE::log::warn("PrismaBridge: Crafting rejected - insufficient gold (Requires {}, Has {}).",
-                totalGold, currentGold);
-            ShowHUDNotification("You do not possess enough gold to forge this incantation!");
-            PlaySound("cancel");
-            return false;
-        }
-
-        if (totalGold > 0) {
-            DeductPlayerGold(player, totalGold);
-        }
-
-        RE::MagicSystem::Delivery delivery = (targetType == "Self") 
-            ? RE::MagicSystem::Delivery::kSelf 
-            : RE::MagicSystem::Delivery::kAimed;
-
-        RE::MagicSystem::CastingType casting = (castType == "Concentration")
-            ? RE::MagicSystem::CastingType::kConcentration
-            : RE::MagicSystem::CastingType::kFireAndForget;
+        std::string castTypeStr = extractString("castType");
+        std::string targetTypeStr = extractString("targetType");
+        std::uint32_t totalMagicka = extractUint("totalMagickaCost");
+        std::uint32_t totalGold = extractUint("totalGoldCost");
 
         SpellCreationParams params;
         params.spellName = spellName;
-        params.deliveryType = delivery;
-        params.castingType = casting;
-        params.chargeTime = (casting == RE::MagicSystem::CastingType::kConcentration) ? 0.0f : 0.5f;
+        params.castingType = (castTypeStr == "Concentration") ? 
+            RE::MagicSystem::CastingType::kConcentration : RE::MagicSystem::CastingType::kFireAndForget;
+        params.deliveryType = (targetTypeStr == "Self") ? 
+            RE::MagicSystem::Delivery::kSelf : RE::MagicSystem::Delivery::kAimed;
+        params.chargeTime = (params.castingType == RE::MagicSystem::CastingType::kConcentration) ? 0.0f : 0.5f;
 
-        const auto effectsPos = a_jsonPayload.find("\"effects\"");
-        if (effectsPos == std::string::npos) {
-            SKSE::log::error("PrismaBridge: Invalid payload - missing 'effects' array. Refunding gold.");
-            RefundGold(player, totalGold);
-            ShowHUDNotification("Incantation Unstable! Arcane matrix collapsed. Gold refunded.");
-            PlaySound("cancel");
-            return false;
-        }
+        CustomSpellRecord coSaveRecord;
+        coSaveRecord.spellName = spellName;
+        coSaveRecord.castTypeStr = castTypeStr.empty() ? "FireAndForget" : castTypeStr;
+        coSaveRecord.targetTypeStr = targetTypeStr.empty() ? "Aimed" : targetTypeStr;
+        coSaveRecord.totalMagickaCost = totalMagicka;
+        coSaveRecord.totalGoldCost = totalGold;
 
-        const std::string effectsSub = a_jsonPayload.substr(effectsPos);
+        auto effectsPos = a_jsonPayload.find("\"effects\"");
+        if (effectsPos != std::string::npos) {
+            size_t cursor = effectsPos;
+            while ((cursor = a_jsonPayload.find('{', cursor)) != std::string::npos) {
+                size_t endBlock = a_jsonPayload.find('}', cursor);
+                if (endBlock == std::string::npos) break;
 
-        std::regex singleBlockRegex("\\{([^\\}]+)\\}");
-        std::regex idRegex("\"id\"\\s*:\\s*\"(0x[0-9A-Fa-f]+)\"");
-        std::regex magRegex("\"magnitude\"\\s*:\\s*([0-9.]+)");
-        std::regex durRegex("\"duration\"\\s*:\\s*([0-9]+)");
-        std::regex areaRegex("\"areaFeet\"\\s*:\\s*([0-9]+)");
+                std::string block = a_jsonPayload.substr(cursor, endBlock - cursor + 1);
 
-        auto blocksBegin = std::sregex_iterator(effectsSub.begin(), effectsSub.end(), singleBlockRegex);
-        auto blocksEnd = std::sregex_iterator();
-        std::string failedEffectID = "";
+                auto idPos = block.find("\"id\":\"");
+                if (idPos != std::string::npos) {
+                    auto idEnd = block.find('"', idPos + 6);
+                    std::string hexId = block.substr(idPos + 6, idEnd - (idPos + 6));
+                    RE::FormID mgefId = 0;
+                    try { mgefId = static_cast<RE::FormID>(std::stoul(hexId, nullptr, 16)); } catch (...) {}
 
-        for (auto it = blocksBegin; it != blocksEnd; ++it) {
-            const std::string blockStr = it->str();
+                    auto getBlockNum = [&](const std::string& tag) -> float {
+                        auto p = block.find("\"" + tag + "\":");
+                        if (p == std::string::npos) return 0.0f;
+                        auto numStart = block.find_first_of("0123456789.", p);
+                        auto numEnd = block.find_first_not_of("0123456789.", numStart);
+                        try { return std::stof(block.substr(numStart, numEnd - numStart)); } catch (...) { return 0.0f; }
+                    };
 
-            std::smatch idMatch, magMatch, durMatch, areaMatch;
-            if (std::regex_search(blockStr, idMatch, idRegex)) {
-                const auto formId = static_cast<RE::FormID>(std::stoul(idMatch[1].str(), nullptr, 16));
-                
-                float mag = 10.0f;
-                std::uint32_t dur = 0;
-                std::uint32_t area = 0;
+                    float mag = getBlockNum("magnitude");
+                    auto dur = static_cast<std::uint32_t>(getBlockNum("duration"));
+                    auto area = static_cast<std::uint32_t>(getBlockNum("areaFeet"));
 
-                if (std::regex_search(blockStr, magMatch, magRegex)) {
-                    mag = std::stof(magMatch[1].str());
+                    if (auto* mgef = RE::TESForm::LookupByID<RE::EffectSetting>(mgefId)) {
+                        params.effects.emplace_back(mgef, mag, area, dur);
+
+                        CustomSpellRecord::EffectRecord fxRec;
+                        fxRec.effectSettingFormID = mgefId;
+                        fxRec.effectName = mgef->GetFullName();
+                        fxRec.magnitude = mag;
+                        fxRec.duration = dur;
+                        fxRec.areaFeet = area;
+                        coSaveRecord.effects.push_back(fxRec);
+
+                        if (coSaveRecord.schoolName.empty() || coSaveRecord.schoolName == "Destruction") {
+                            switch (mgef->data.primaryAV) {
+                            case RE::ActorValue::kRestoration: coSaveRecord.schoolName = "Restoration"; break;
+                            case RE::ActorValue::kAlteration:  coSaveRecord.schoolName = "Alteration"; break;
+                            case RE::ActorValue::kConjuration: coSaveRecord.schoolName = "Conjuration"; break;
+                            case RE::ActorValue::kIllusion:    coSaveRecord.schoolName = "Illusion"; break;
+                            default:                           coSaveRecord.schoolName = "Destruction"; break;
+                            }
+                        }
+                    }
                 }
-                if (std::regex_search(blockStr, durMatch, durRegex)) {
-                    dur = static_cast<std::uint32_t>(std::stoul(durMatch[1].str()));
-                }
-                if (std::regex_search(blockStr, areaMatch, areaRegex)) {
-                    area = static_cast<std::uint32_t>(std::stoul(areaMatch[1].str()));
-                }
-
-                if (auto* mgef = RE::TESForm::LookupByID<RE::EffectSetting>(formId)) {
-                    params.effects.push_back({ mgef, mag, area, dur });
-                    SKSE::log::info("PrismaBridge: Resolved composite effect '{}' (FormID: 0x{:08X}) Mag: {:.1f}, Dur: {}s, Area: {}ft",
-                        mgef->GetFullName(), formId, mag, dur, area);
-                } else {
-                    failedEffectID = idMatch[1].str();
-                }
+                cursor = endBlock + 1;
             }
         }
 
         if (params.effects.empty()) {
-            SKSE::log::error("PrismaBridge: Crafting aborted. No valid Magic Effects resolved. Refunding.");
-            RefundGold(player, totalGold);
-            ShowHUDNotification("Incantation Unstable! Arcane matrix collapsed. Gold refunded.");
-            PlaySound("cancel");
-
-            if (!failedEffectID.empty() && s_view != PRISMA_UI_API::kInvalidView && s_prismaUI) {
-                std::string jsCall = "if (window.AltarAPI && window.AltarAPI.lockEffect) { window.AltarAPI.lockEffect('" + failedEffectID + "'); }";
-                s_prismaUI->Invoke(s_view, jsCall.c_str(), nullptr);
-            }
-            return false;
+            SKSE::log::error("[PrismaBridge] No valid magic effects resolved in payload.");
+            return;
         }
+
+        if (totalGold > 0) {
+            auto* gold = RE::TESForm::LookupByID<RE::TESBoundObject>(0x0000000F);
+            if (gold) {
+                player->RemoveItem(gold, static_cast<std::int32_t>(totalGold), RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+            }
+        }
+
+        PlayUIAudio("ITMGoldDown");
 
         auto* createdSpell = SpellFactory::CreateSpell(params, player);
         if (createdSpell) {
-            // Track recipe and live pointer to prevent duplicate stacking on reload
-            Serialization::TrackCreatedSpell(params, createdSpell);
-            SKSE::log::info("PrismaBridge: Successfully forged spell '{}' (FormID: 0x{:08X}) with {} unique effects.", 
-                params.spellName, static_cast<std::uint32_t>(createdSpell->GetFormID()), params.effects.size());
-            return true;
+            coSaveRecord.formID = createdSpell->GetFormID();
+            Serialization::TrackCustomSpell(coSaveRecord);
+
+            std::string refreshedList = Serialization::GetActiveSpellsJson();
+            s_prismaUI->Invoke(s_altarView, std::format("window.AltarAPI.setCreatedSpells({});", refreshedList).c_str(), nullptr);
+
+            ShowHUDMessage(std::format("'{}' successfully forged and bound to your spirit.", spellName).c_str());
+        }
+    }
+
+    void PrismaBridge::HandleDeconstructSpellPayload(const std::string& a_jsonPayload)
+    {
+        SKSE::log::info("[PrismaBridge] Processing deconstruct payload: {}", a_jsonPayload);
+
+        auto idPos = a_jsonPayload.find("\"formId\":\"");
+        if (idPos == std::string::npos) {
+            idPos = a_jsonPayload.find("\"formId\": \"");
         }
 
-        SKSE::log::error("PrismaBridge: Engine failed to allocate SpellItem. Refunding.");
-        RefundGold(player, totalGold);
-        ShowHUDNotification("Incantation Failed! Form allocation error. Gold refunded.");
-        PlaySound("cancel");
-        return false;
+        if (idPos == std::string::npos) {
+            SKSE::log::error("[PrismaBridge] Missing formId in deconstruct payload!");
+            return;
+        }
+
+        size_t startPos = a_jsonPayload.find('"', idPos + 9) != std::string::npos ? (idPos + 9) : (idPos + 10);
+        if (a_jsonPayload[startPos] == '"') startPos++;
+
+        size_t endPos = a_jsonPayload.find('"', startPos);
+        std::string hexStr = a_jsonPayload.substr(startPos, endPos - startPos);
+
+        RE::FormID targetFormID = 0;
+        try {
+            targetFormID = static_cast<RE::FormID>(std::stoul(hexStr, nullptr, 16));
+        } catch (...) {
+            SKSE::log::error("[PrismaBridge] Failed to parse hex FormID from string: {}", hexStr);
+            return;
+        }
+
+        if (Serialization::DeleteCustomSpell(targetFormID)) {
+            PlayUIAudio("MAGFail");
+
+            std::string refreshedList = Serialization::GetActiveSpellsJson();
+            s_prismaUI->Invoke(s_altarView, std::format("window.AltarAPI.setCreatedSpells({});", refreshedList).c_str(), nullptr);
+
+            ShowHUDMessage("Incantation unbound and purged from your spellbook.");
+        }
     }
 }

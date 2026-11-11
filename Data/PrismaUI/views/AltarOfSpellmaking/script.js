@@ -1,7 +1,7 @@
 /**
  * ============================================================================
  * Altar of Spellmaking - Frontend Controller & SKSE Bridge
- * Duplicate Prevention, Fail-Safe Effect Locking & Formula Synchronization
+ * Deep Apocalypse Magic School Compatibility & BaseCost Floor Formula
  * ============================================================================
  */
 
@@ -22,18 +22,36 @@ function triggerSliderAudio() {
     }
 }
 
+// Deep School Vector Asset Resolver (Expanded with Apocalypse Magic Archetypes)
 function resolveSchoolAsset(school, spellName) {
     let s = (school || "").toLowerCase();
     const name = (spellName || "").toLowerCase();
 
     if (!s || s === "alteration" || s === "unknown") {
-        if (name.includes("fire") || name.includes("flame") || name.includes("frost") || name.includes("ice") || name.includes("shock") || name.includes("lightning") || name.includes("spark")) {
+        // Comprehensive Destruction Archetypes (Vanilla + Apocalypse + Mysticism)
+        if (name.includes("fire") || name.includes("flame") || name.includes("frost") || 
+            name.includes("ice") || name.includes("shock") || name.includes("lightning") || 
+            name.includes("spark") || name.includes("bolide") || name.includes("rift") || 
+            name.includes("blast") || name.includes("bombard") || name.includes("burst") || 
+            name.includes("barrage") || name.includes("cinder") || name.includes("cremate") || 
+            name.includes("scorch") || name.includes("meteor") || name.includes("hailstone") || 
+            name.includes("thundercrack") || name.includes("combust") || name.includes("howler") || 
+            name.includes("volcano") || name.includes("cyclone") || name.includes("plasma")) {
             s = "destruction";
-        } else if (name.includes("heal") || name.includes("restore") || name.includes("cure") || name.includes("ward") || name.includes("turn")) {
+        } else if (name.includes("heal") || name.includes("restore") || name.includes("cure") || 
+                   name.includes("ward") || name.includes("turn") || name.includes("repel") || 
+                   name.includes("wildfire") || name.includes("resplendent")) {
             s = "restoration";
-        } else if (name.includes("fury") || name.includes("fear") || name.includes("calm") || name.includes("frenzy") || name.includes("rout") || name.includes("courage") || name.includes("rally")) {
+        } else if (name.includes("fury") || name.includes("fear") || name.includes("calm") || 
+                   name.includes("frenzy") || name.includes("rout") || name.includes("courage") || 
+                   name.includes("rally") || name.includes("mayhem") || name.includes("hysteria") || 
+                   name.includes("mind") || name.includes("compel") || name.includes("evil twin")) {
             s = "illusion";
-        } else if (name.includes("conjure") || name.includes("summon") || name.includes("bound") || name.includes("raise") || name.includes("reanimate") || name.includes("trap")) {
+        } else if (name.includes("conjure") || name.includes("summon") || name.includes("bound") || 
+                   name.includes("raise") || name.includes("reanimate") || name.includes("trap") || 
+                   name.includes("banish") || name.includes("command") || name.includes("familiar") || 
+                   name.includes("atronach") || name.includes("dremora") || name.includes("herne") || 
+                   name.includes("lich")) {
             s = "conjuration";
         }
     }
@@ -46,6 +64,7 @@ function resolveSchoolAsset(school, spellName) {
 }
 
 const AppState = {
+    activeTab: "forge",
     player: {
         gold: 0,
         maxMagicka: 100,
@@ -53,7 +72,10 @@ const AppState = {
     },
     knownEffects: [],
     addedEffects: [],
-    lockedEffects: new Set(), // Set of disabled/blacklisted effect IDs
+    editingCartIndex: -1,
+    createdSpells: [],
+    selectedCreatedSpell: null,
+    lockedEffects: new Set(),
     currentConfig: null,
     lockedCastType: null,
     lockedTargetType: null,
@@ -61,6 +83,12 @@ const AppState = {
 };
 
 const DOM = {
+    altarViewport: document.getElementById("altarViewport"),
+    forgeModeContainer: document.getElementById("forgeModeContainer"),
+    deconstructModeContainer: document.getElementById("deconstructModeContainer"),
+    tabForgeBtn: document.getElementById("tabForgeBtn"),
+    tabDeconstructBtn: document.getElementById("tabDeconstructBtn"),
+
     effectList: document.getElementById("effectList"),
     playerGoldDisplay: document.getElementById("playerGoldDisplay"),
     spellNameInput: document.getElementById("spellNameInput"),
@@ -87,9 +115,45 @@ const DOM = {
     totalDurationDisplay: document.getElementById("totalDurationDisplay"),
     totalGoldDisplay: document.getElementById("totalGoldDisplay"),
     createSpellBtn: document.getElementById("createSpellBtn"),
-    closeMenuBtn: document.getElementById("closeMenuBtn")
+    closeMenuBtn: document.getElementById("closeMenuBtn"),
+
+    createdSpellList: document.getElementById("createdSpellList"),
+    createdSpellCount: document.getElementById("createdSpellCount"),
+    deconstructPlaceholder: document.getElementById("deconstructPlaceholder"),
+    deconstructContent: document.getElementById("deconstructContent"),
+    deconSchoolBadge: document.getElementById("deconSchoolBadge"),
+    deconSpellName: document.getElementById("deconSpellName"),
+    executeDeconstructBtn: document.getElementById("executeDeconstructBtn"),
+    deconCastingType: document.getElementById("deconCastingType"),
+    deconDeliveryType: document.getElementById("deconDeliveryType"),
+    deconFormId: document.getElementById("deconFormId"),
+    deconEffectsList: document.getElementById("deconEffectsList"),
+    closeDeconMenuBtn: document.getElementById("closeDeconMenuBtn")
 };
 
+function switchMode(newMode) {
+    if (AppState.activeTab === newMode) return;
+    AppState.activeTab = newMode;
+    triggerEngineAudio("UIMenuPrevNext");
+
+    if (newMode === "forge") {
+        DOM.tabForgeBtn.classList.add("active");
+        DOM.tabDeconstructBtn.classList.remove("active");
+        DOM.forgeModeContainer.classList.remove("hidden");
+        DOM.deconstructModeContainer.classList.add("hidden");
+    } else {
+        DOM.tabDeconstructBtn.classList.add("active");
+        DOM.tabForgeBtn.classList.remove("active");
+        DOM.deconstructModeContainer.classList.remove("hidden");
+        DOM.forgeModeContainer.classList.add("hidden");
+        renderCreatedSpells();
+    }
+}
+
+if (DOM.tabForgeBtn) DOM.tabForgeBtn.addEventListener("click", () => switchMode("forge"));
+if (DOM.tabDeconstructBtn) DOM.tabDeconstructBtn.addEventListener("click", () => switchMode("deconstruct"));
+
+// BaseCost Floor Formula
 function calculateSingleEffectCost(effect, mag, dur, areaRawFeet) {
     const rawBase = effect.baseCost || 10.0;
     const base = Math.max(1.0, rawBase);
@@ -98,10 +162,11 @@ function calculateSingleEffectCost(effect, mag, dur, areaRawFeet) {
     const durFactor = (dur > 0) ? Math.pow(dur / 10.0, 1.1) : 1.0;
     const areaFactor = (areaRawFeet > 0) ? (areaRawFeet * 0.1) : 1.0;
 
-    constexpr_Scale = 0.5;
+    const constexpr_Scale = 0.5;
     const computedMagicka = Math.round(base * magFactor * durFactor * areaFactor * constexpr_Scale);
-    const finalMagicka = Math.max(10, computedMagicka);
-    const finalGold = Math.max(25, Math.round(finalMagicka * 2.5));
+
+    const finalMagicka = Math.max(Math.round(rawBase), Math.max(10, computedMagicka));
+    const finalGold = Math.max(Math.round(rawBase * 2.5), Math.round(finalMagicka * 2.5));
 
     return { magicka: finalMagicka, gold: finalGold };
 }
@@ -140,13 +205,16 @@ function recalculateTotalCart() {
     }
 }
 
-// Checks compatibility, duplicate state, and locked status
 function getEffectState(effect) {
     if (AppState.lockedEffects.has(effect.id)) {
         return { selectable: false, reason: "locked" };
     }
 
-    const isAlreadyAdded = AppState.addedEffects.some(item => item.effect.id === effect.id);
+    const isAlreadyAdded = AppState.addedEffects.some(item => 
+        (item.effect.id && effect.id && item.effect.id.toLowerCase() === effect.id.toLowerCase()) ||
+        (item.effect.name && effect.name && item.effect.name.trim().toLowerCase() === effect.name.trim().toLowerCase())
+    );
+
     if (isAlreadyAdded) {
         return { selectable: false, reason: "duplicate" };
     }
@@ -171,23 +239,35 @@ function renderKnownEffects() {
         const state = getEffectState(effect);
 
         const li = document.createElement("li");
-        li.className = `effect-item ${!state.selectable ? (state.reason === "duplicate" ? "disabled-duplicate" : (state.reason === "locked" ? "disabled-locked" : "incompatible")) : ""}`;
-        li.setAttribute("role", "option");
+        let itemClass = "effect-item";
+        let statusBadge = "";
 
-        if (state.reason === "duplicate") {
-            li.title = "Already added to the current incantation (Duplicates not permitted)";
-        } else if (state.reason === "locked") {
-            li.title = "Effect currently locked due to matrix instability";
+        if (!state.selectable) {
+            if (state.reason === "duplicate") {
+                itemClass += " disabled-duplicate already-added";
+                statusBadge = `<span class="cart-lock-tag font-futura">IN CART</span>`;
+            } else if (state.reason === "locked") {
+                itemClass += " disabled-locked";
+            } else {
+                itemClass += " incompatible";
+            }
         }
+
+        li.className = itemClass;
+        li.setAttribute("role", "option");
 
         li.innerHTML = `
             <span class="effect-icon-wrap">
                 <img src="${asset.path}" class="school-svg-img ${asset.colorClass}" alt="${effect.school}" />
             </span>
             <span class="effect-name">${effect.name}</span>
+            ${statusBadge}
         `;
 
-        if (state.selectable) {
+        if (!state.selectable) {
+            li.style.pointerEvents = "none";
+            li.setAttribute("aria-disabled", "true");
+        } else {
             li.addEventListener("mouseenter", () => triggerEngineAudio("hover"));
             li.addEventListener("click", () => {
                 triggerEngineAudio("click");
@@ -200,6 +280,14 @@ function renderKnownEffects() {
 }
 
 function openEffectConfiguration(effect, asset, editIndex = null) {
+    if (editIndex === null && AppState.addedEffects.some(item => 
+        (item.effect.id && effect.id && item.effect.id.toLowerCase() === effect.id.toLowerCase()) ||
+        (item.effect.name && effect.name && item.effect.name.trim().toLowerCase() === effect.name.trim().toLowerCase())
+    )) {
+        console.warn("Blocked duplicate selection attempt for:", effect.name);
+        return;
+    }
+
     let defaultTarget = AppState.lockedTargetType;
     const minMag = effect.minMagnitude !== undefined ? effect.minMagnitude : 1;
     const minDur = effect.minDuration !== undefined ? effect.minDuration : 0;
@@ -255,7 +343,7 @@ function openEffectConfiguration(effect, asset, editIndex = null) {
     DOM.rangeBtns.forEach(btn => {
         const btnType = btn.dataset.range;
         const isAllowedByEffect = Array.isArray(effect.allowedTargetTypes) && effect.allowedTargetTypes.includes(btnType);
-        const matchesCurrentLock = !AppState.lockedTargetType || AppState.lockedTargetType === btnType;
+        const matchesCurrentLock = (editIndex === 0) || !AppState.lockedTargetType || AppState.lockedTargetType === btnType;
 
         if (isAllowedByEffect && matchesCurrentLock) {
             btn.classList.remove("disabled-locked");
@@ -275,6 +363,7 @@ function openEffectConfiguration(effect, asset, editIndex = null) {
 
 function closeEffectConfiguration() {
     AppState.currentConfig = null;
+    AppState.editingCartIndex = -1;
     DOM.viewConfig.classList.add("hidden");
     DOM.viewCart.classList.remove("hidden");
     if (DOM.cartSummaryBar) DOM.cartSummaryBar.classList.remove("hidden");
@@ -301,7 +390,7 @@ function updateConfigLivePreview() {
         AppState.currentConfig.areaRawFeet
     );
 
-    const btnText = (AppState.currentConfig.editIndex !== null)
+    const btnText = (AppState.currentConfig.editIndex !== null && AppState.currentConfig.editIndex >= 0)
         ? `Update (${liveCost.magicka} Magicka / ${liveCost.gold} Gold)`
         : `Confirm (${liveCost.magicka} Magicka / ${liveCost.gold} Gold)`;
 
@@ -363,6 +452,7 @@ function renderAddedEffectsCart() {
 function resetSpellmakingCart() {
     AppState.addedEffects = [];
     AppState.currentConfig = null;
+    AppState.editingCartIndex = -1;
     AppState.lockedCastType = null;
     AppState.lockedTargetType = null;
     DOM.spellNameInput.value = "";
@@ -434,7 +524,7 @@ DOM.cfgConfirmBtn.addEventListener("click", () => {
             computedGold: cost.gold
         };
 
-        if (AppState.currentConfig.editIndex !== null && AppState.addedEffects[AppState.currentConfig.editIndex]) {
+        if (AppState.currentConfig.editIndex !== null && AppState.currentConfig.editIndex >= 0 && AppState.addedEffects[AppState.currentConfig.editIndex]) {
             AppState.addedEffects[AppState.currentConfig.editIndex] = newEntry;
         } else {
             AppState.addedEffects.push(newEntry);
@@ -503,8 +593,118 @@ DOM.closeMenuBtn.addEventListener("click", () => {
     }
 });
 
+if (DOM.closeDeconMenuBtn) {
+    DOM.closeDeconMenuBtn.addEventListener("click", () => {
+        triggerEngineAudio("cancel");
+        if (typeof window.onMenuCloseRequested === "function") {
+            window.onMenuCloseRequested();
+        }
+    });
+}
+
+function renderCreatedSpells() {
+    if (!DOM.createdSpellList) return;
+    DOM.createdSpellList.innerHTML = "";
+    if (DOM.createdSpellCount) DOM.createdSpellCount.textContent = AppState.createdSpells.length;
+
+    if (AppState.createdSpells.length === 0) {
+        if (DOM.deconstructPlaceholder) DOM.deconstructPlaceholder.classList.remove("hidden");
+        if (DOM.deconstructContent) DOM.deconstructContent.classList.add("hidden");
+        return;
+    }
+
+    AppState.createdSpells.forEach((spell) => {
+        const asset = resolveSchoolAsset(spell.school || "Destruction", spell.name);
+        const li = document.createElement("li");
+        li.className = "effect-item";
+        if (AppState.selectedCreatedSpell && AppState.selectedCreatedSpell.formId === spell.formId) {
+            li.classList.add("active");
+        }
+
+        li.innerHTML = `
+            <span class="effect-icon-wrap">
+                <img src="${asset.path}" class="school-svg-img ${asset.colorClass}" alt="${spell.school || 'Magic'}" />
+            </span>
+            <span>${spell.name}</span>
+        `;
+
+        li.addEventListener("mouseenter", () => triggerEngineAudio("hover"));
+        li.addEventListener("click", () => {
+            triggerEngineAudio("click");
+            selectSpellToDeconstruct(spell, asset);
+            document.querySelectorAll("#createdSpellList .effect-item").forEach(item => item.classList.remove("active"));
+            li.classList.add("active");
+        });
+
+        DOM.createdSpellList.appendChild(li);
+    });
+}
+
+function selectSpellToDeconstruct(spell, asset) {
+    AppState.selectedCreatedSpell = spell;
+
+    if (DOM.deconstructPlaceholder) DOM.deconstructPlaceholder.classList.add("hidden");
+    if (DOM.deconstructContent) DOM.deconstructContent.classList.remove("hidden");
+
+    if (DOM.deconSchoolBadge) DOM.deconSchoolBadge.innerHTML = `<img src="${asset.path}" class="school-svg-img ${asset.colorClass}" alt="${spell.school || 'Magic'}" />`;
+    if (DOM.deconSpellName) DOM.deconSpellName.textContent = spell.name;
+    if (DOM.deconCastingType) DOM.deconCastingType.textContent = spell.castType || "Fire and Forget";
+    if (DOM.deconDeliveryType) DOM.deconDeliveryType.textContent = spell.targetType || "Aimed";
+    if (DOM.deconFormId) DOM.deconFormId.textContent = spell.formId || "Custom Form";
+
+    if (DOM.deconEffectsList) {
+        DOM.deconEffectsList.innerHTML = "";
+        if (Array.isArray(spell.effects)) {
+            spell.effects.forEach(fx => {
+                const li = document.createElement("li");
+                li.className = "deconstruct-fx-card";
+                li.innerHTML = `
+                    <span class="fx-card-title">${fx.name || 'Arcane Effect'}</span>
+                    <span class="fx-card-stats font-futura">Mag: ${fx.magnitude} | Dur: ${fx.duration}s | Area: ${fx.area || 0}ft</span>
+                `;
+                DOM.deconEffectsList.appendChild(li);
+            });
+        }
+    }
+}
+
+if (DOM.executeDeconstructBtn) {
+    DOM.executeDeconstructBtn.addEventListener("click", () => {
+        if (!AppState.selectedCreatedSpell) return;
+
+        triggerEngineAudio("fail");
+        const spell = AppState.selectedCreatedSpell;
+        const payload = {
+            formId: spell.formId,
+            spellName: spell.name
+        };
+
+        if (typeof window.onPlayerDeconstructSpell === "function") {
+            window.onPlayerDeconstructSpell(JSON.stringify(payload));
+        }
+
+        AppState.createdSpells = AppState.createdSpells.filter(s => s.formId !== spell.formId);
+        AppState.selectedCreatedSpell = null;
+        if (DOM.deconstructContent) DOM.deconstructContent.classList.add("hidden");
+        if (DOM.deconstructPlaceholder) DOM.deconstructPlaceholder.classList.remove("hidden");
+        renderCreatedSpells();
+    });
+}
+
 // SKSE / PrismaUI Bridge Interface
 window.AltarAPI = {
+    openMenu: function() {
+        if (DOM.altarViewport) {
+            DOM.altarViewport.classList.remove("hidden-viewport");
+        }
+    },
+
+    closeMenu: function() {
+        if (DOM.altarViewport) {
+            DOM.altarViewport.classList.add("hidden-viewport");
+        }
+    },
+
     setPlayerData: function(data) {
         if (!data) return;
         if (typeof data.currentGold === "number") {
@@ -527,6 +727,13 @@ window.AltarAPI = {
         }
     },
 
+    setCreatedSpells: function(createdList) {
+        if (Array.isArray(createdList)) {
+            AppState.createdSpells = createdList;
+            renderCreatedSpells();
+        }
+    },
+
     lockEffect: function(effectId) {
         if (!effectId) return;
         AppState.lockedEffects.add(effectId);
@@ -543,6 +750,41 @@ window.AltarAPI = {
         resetSpellmakingCart();
     }
 };
+
+(function initBrowserTestEnvironment() {
+    const isStandaloneWeb = !navigator.userAgent.includes("Ultralight") && typeof window.onPlayerCraftSpell === "undefined";
+    
+    if (isStandaloneWeb) {
+        console.info("[Altar of Spellmaking] Running in Standalone Browser Test Mode.");
+        const mockEffects = [
+            { id: "0x0001CEA1", name: "Fireball", school: "Destruction", baseCost: 15, castType: "FireAndForget", allowedTargetTypes: ["Aimed"], supportsArea: true, defaultArea: 15, description: "Engulfs targets in searing flames, dealing fire damage and causing an explosion." },
+            { id: "0x080FADFD", name: "Lightning Strike", school: "Destruction", baseCost: 20, castType: "FireAndForget", allowedTargetTypes: ["Aimed"], supportsArea: true, defaultArea: 15, description: "Calls down a bolt of lightning, dealing heavy shock damage to targets in the area." },
+            { id: "0x00012F03", name: "Firebolt", school: "Destruction", baseCost: 8, castType: "FireAndForget", allowedTargetTypes: ["Aimed"], supportsArea: false, defaultArea: 0, description: "Fires a bolt of fire, dealing 25 points of fire damage to a single target." },
+            { id: "0x00012FCD", name: "Healing", school: "Restoration", baseCost: 12, castType: "Concentration", allowedTargetTypes: ["Self"], supportsArea: false, defaultArea: 0, description: "Heals the caster for 10 points per second." },
+            { id: "0x0001EA77", name: "Fear", school: "Illusion", baseCost: 18, castType: "FireAndForget", allowedTargetTypes: ["Aimed"], supportsArea: false, defaultArea: 0, description: "Creatures and people up to level 9 flee from combat for 30 seconds." },
+            { id: "0x0004DEE6", name: "Fury", school: "Illusion", baseCost: 14, castType: "FireAndForget", allowedTargetTypes: ["Aimed"], supportsArea: true, defaultArea: 15, description: "Creatures and people in the area attack anything nearby for 30 seconds." },
+            { id: "0x000211EB", name: "Bound Sword", school: "Conjuration", baseCost: 22, castType: "FireAndForget", allowedTargetTypes: ["Self"], supportsArea: false, defaultArea: 0, description: "Creates a magic sword for 120 seconds. Sheathe it to dispel." },
+            { id: "0x0005AD5C", name: "Oakflesh", school: "Alteration", baseCost: 16, castType: "FireAndForget", allowedTargetTypes: ["Self"], supportsArea: false, defaultArea: 0, description: "Improves the caster's armor rating by 40 points for 60 seconds." }
+        ];
+
+        window.AltarAPI.openMenu();
+        window.AltarAPI.setPlayerData({ currentGold: 18500, maxMagicka: 280, currentMagicka: 280 });
+        window.AltarAPI.setKnownEffects(mockEffects);
+        window.AltarAPI.setCreatedSpells([
+            {
+                formId: "0xFF001001",
+                name: "Blazing Wrath",
+                school: "Destruction",
+                castType: "FireAndForget",
+                targetType: "Aimed",
+                effects: [
+                    { name: "Fireball", magnitude: 45, duration: 0, area: 15 },
+                    { name: "Firebolt", magnitude: 20, duration: 3, area: 0 }
+                ]
+            }
+        ]);
+    }
+})();
 
 renderKnownEffects();
 renderAddedEffectsCart();
