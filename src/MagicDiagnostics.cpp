@@ -1,18 +1,28 @@
 #include "MagicDiagnostics.h"
+#include "CompatibilityManager.h"
+#include <unordered_set>
+#include <chrono>
 
 namespace Spellmaking
 {
+    namespace
+    {
+        // Prevents engine dual-event spam within the same animation frame (150ms window)
+        static inline RE::FormID s_lastCastSpellID = 0;
+        static inline std::chrono::steady_clock::time_point s_lastCastTimestamp{};
+    }
+
     void MagicDiagnostics::Register()
     {
         auto* eventHolder = RE::ScriptEventSourceHolder::GetSingleton();
         if (!eventHolder) {
-            SKSE::log::error("MagicDiagnostics: ScriptEventSourceHolder is null. Failed to register diagnostics.");
+            SKSE::log::error("[HitInterceptor] ScriptEventSourceHolder is null. Failed to register.");
             return;
         }
 
         eventHolder->AddEventSink<RE::TESSpellCastEvent>(GetSingleton());
         eventHolder->AddEventSink<RE::TESHitEvent>(GetSingleton());
-        SKSE::log::info("MagicDiagnostics: Successfully registered live spell cast and hit event sinks.");
+        SKSE::log::info("[HitInterceptor] Successfully hooked into live spell cast and hit event pipelines.");
     }
 
     RE::BSEventNotifyControl MagicDiagnostics::ProcessEvent(const RE::TESSpellCastEvent* a_event, RE::BSTEventSource<RE::TESSpellCastEvent>*)
@@ -21,16 +31,75 @@ namespace Spellmaking
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        // In CommonLibSSE-NG, the casting actor reference is stored in 'object', not 'caster'
         auto* caster = a_event->object ? a_event->object->As<RE::Actor>() : nullptr;
         if (!caster || !caster->IsPlayerRef()) {
             return RE::BSEventNotifyControl::kContinue;
         }
 
         auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell);
-        if (spell) {
-            SKSE::log::info("[DIAGNOSTIC - CAST] Player initiated spell '{}' (FormID: 0x{:08X}) | Cost Override: {}",
-                spell->GetFullName(), spell->GetFormID(), spell->data.costOverride);
+        if (!spell) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        const auto castFormID = spell->GetFormID();
+
+        // Only process player-crafted dynamic spells (0xFFxxxxxx)
+        if ((castFormID >> 24) == 0xFF) {
+            // Frame-level anti-stacking guard: block duplicate TESSpellCastEvent dispatches within 150ms
+            const auto now = std::chrono::steady_clock::now();
+            if (castFormID == s_lastCastSpellID &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - s_lastCastTimestamp).count() < 150) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            s_lastCastSpellID = castFormID;
+            s_lastCastTimestamp = now;
+
+            SKSE::log::info("[CAST] Player cast spell '{}' (FormID: 0x{:08X}) | Cost: {}",
+                spell->GetFullName(), castFormID, spell->data.costOverride);
+
+            auto* compatMgr = CompatibilityManager::GetSingleton();
+            if (!compatMgr) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            // Retrieve ONLY the exact authentic parent spells that the player explicitly combined into this spell
+            // Index 0 in authenticSources is ALWAYS the primary visual projectile leader already fired by the engine!
+            const auto authenticSources = compatMgr->GetCraftedSpellSources(castFormID);
+            if (authenticSources.empty()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            for (std::size_t i = 0; i < authenticSources.size(); ++i) {
+                const auto sourceSpellID = authenticSources[i];
+                auto* origSpell = RE::TESForm::LookupByID<RE::SpellItem>(sourceSpellID);
+                if (!origSpell) continue;
+
+                // Check if this parent spell has a conflicting delivery companion (like Lightning Strike's Location Disintegrate)
+                // that had to be delegated out of the composite SpellItem
+                bool hasDelegatedCompanion = false;
+                for (auto* origEff : origSpell->effects) {
+                    if (origEff && origEff->baseEffect && origEff->baseEffect->data.delivery != spell->data.delivery) {
+                        hasDelegatedCompanion = true;
+                        break;
+                    }
+                }
+
+                // Anti-Stacking Rule:
+                // - If i == 0 (Primary Visual Leader, e.g., Bolide in "Bolide + Firebolt"), the dynamic spell ITSELF
+                //   already fires Bolide's projectile and all of Bolide's distance companions! Do NOT fire it a second time
+                //   unless it had a delegated ground-location companion (like Lightning Strike).
+                // - If i > 0 (Secondary combined spells, e.g., Firebolt or Lightning Strike), co-launch it!
+                if (i > 0 || hasDelegatedCompanion) {
+                    if (auto* magicCaster = caster->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                        magicCaster->CastSpellImmediate(origSpell, false, nullptr, 1.0f, false, 0.0f, caster);
+                        SKSE::log::info("[CAST-PROC] Co-launched secondary/delegated spell '{}' (0x{:08X}) along player aim!",
+                            origSpell->GetFullName(), origSpell->GetFormID());
+                    }
+                }
+            }
+        } else {
+            SKSE::log::info("[CAST] Player cast spell '{}' (FormID: 0x{:08X}) | Cost: {}",
+                spell->GetFullName(), castFormID, spell->data.costOverride);
         }
 
         return RE::BSEventNotifyControl::kContinue;
@@ -47,9 +116,7 @@ namespace Spellmaking
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        auto* target = a_event->target ? a_event->target->As<RE::Actor>() : nullptr;
         auto* sourceForm = RE::TESForm::LookupByID(a_event->source);
-
         if (!sourceForm) {
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -59,30 +126,20 @@ namespace Spellmaking
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        // TESObjectCELL::IsInteriorCell() evaluates whether the target is in an interior cell
-        bool isInterior = false;
-        if (target) {
-            auto* parentCell = target->GetParentCell();
-            isInterior = parentCell ? parentCell->IsInteriorCell() : false;
-        }
+        const auto hitFormID = spell->GetFormID();
 
-        std::string keywordDump;
-        auto* kwForm = static_cast<RE::BGSKeywordForm*>(static_cast<RE::MagicItem*>(spell));
-        if (kwForm && kwForm->keywords) {
-            for (std::uint32_t i = 0; i < kwForm->numKeywords; ++i) {
-                if (auto* kw = kwForm->keywords[i]) {
-                    keywordDump += kw->GetFormEditorID();
-                    keywordDump += " ";
-                }
+        if ((hitFormID >> 24) == 0xFF) {
+            auto* compatMgr = CompatibilityManager::GetSingleton();
+            if (!compatMgr) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            const auto authenticSources = compatMgr->GetCraftedSpellSources(hitFormID);
+            if (!authenticSources.empty()) {
+                auto* mutableHitEvent = const_cast<RE::TESHitEvent*>(a_event);
+                mutableHitEvent->source = authenticSources.front();
             }
         }
-
-        SKSE::log::info("[DIAGNOSTIC - HIT] Spell '{}' hit target '{}' (FormID: 0x{:08X}) | Interior: {} | Keywords: [{}]",
-            spell->GetFullName(),
-            target ? target->GetName() : "Unknown",
-            target ? target->GetFormID() : 0,
-            isInterior ? "YES (Blocks Lightning!)" : "NO (Sky Clear)",
-            keywordDump.empty() ? "NONE" : keywordDump);
 
         return RE::BSEventNotifyControl::kContinue;
     }

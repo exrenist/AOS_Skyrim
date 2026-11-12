@@ -8,7 +8,56 @@ namespace Spellmaking
 {
     namespace
     {
-        // Safely purges a spell pointer from Skyrim's MagicFavorites singleton (both spells and 1-8 hotkeys)
+        // Resolves Skyrim.esm LeftHand (0x00013F43) and RightHand (0x00013F42) equip slots
+        [[nodiscard]] RE::BGSEquipSlot* GetLeftHandEquipSlot()
+        {
+            return RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x00013F43);
+        }
+
+        [[nodiscard]] RE::BGSEquipSlot* GetRightHandEquipSlot()
+        {
+            return RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x00013F42);
+        }
+
+        // Checks if a TESForm pointer in MagicFavorites is a live, valid form registered in the engine
+        // Prevents Access Violation on freed 0xFFxxxxxx memory!
+        [[nodiscard]] bool IsLiveValidMagicForm(RE::TESForm* a_ptr, RE::FormID& a_outFormID)
+        {
+            a_outFormID = 0;
+            if (!a_ptr) {
+                return false;
+            }
+
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (player) {
+                for (auto* sp : player->GetActorRuntimeData().addedSpells) {
+                    if (sp == a_ptr) {
+                        a_outFormID = sp->GetFormID();
+                        return true;
+                    }
+                }
+            }
+
+            auto* dataHandler = RE::TESDataHandler::GetSingleton();
+            if (dataHandler) {
+                for (auto* sp : dataHandler->GetFormArray<RE::SpellItem>()) {
+                    if (sp == a_ptr) {
+                        a_outFormID = sp->GetFormID();
+                        return true;
+                    }
+                }
+                for (auto* shout : dataHandler->GetFormArray<RE::TESShout>()) {
+                    if (shout == a_ptr) {
+                        a_outFormID = shout->GetFormID();
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        // Safely removes a specific pointer from MagicFavorites without dereferencing dead memory
         void RemoveFromMagicFavorites(RE::TESForm* a_form)
         {
             if (!a_form) {
@@ -20,13 +69,11 @@ namespace Spellmaking
                 return;
             }
 
-            // 1. Remove from favorites list
             auto it = std::find(magicFavs->spells.begin(), magicFavs->spells.end(), a_form);
             if (it != magicFavs->spells.end()) {
                 magicFavs->spells.erase(it);
             }
 
-            // 2. Remove from 1-8 hotkeys array
             for (auto& hotkeyForm : magicFavs->hotkeys) {
                 if (hotkeyForm == a_form) {
                     hotkeyForm = nullptr;
@@ -34,53 +81,115 @@ namespace Spellmaking
             }
         }
 
-        // Scrubs any dangling or dead dynamic FormIDs (0xFFxxxxxx) from MagicFavorites
-        void ScrubDanglingFavorites(
-            const std::vector<RE::FormID>& a_historicalIDs,
-            const std::vector<CustomSpellRecord>& a_activeRecords,
-            std::unordered_set<RE::FormID>& a_outFavoritedOldIDs,
-            std::unordered_map<RE::FormID, std::size_t>& a_outHotkeyOldIDs)
+        // Captures current live Favorite, Hotkey (1-8), and Left/Right Hand Equip states into s_activeCustomSpells
+        void SnapshotPlayerSpellStates(std::vector<CustomSpellRecord>& a_records)
         {
+            auto* player = RE::PlayerCharacter::GetSingleton();
             auto* magicFavs = RE::MagicFavorites::GetSingleton();
+            if (!player) {
+                return;
+            }
+
+            // In CommonLibSSE-NG: selectedSpells[0] = Left Hand, selectedSpells[1] = Right Hand
+            auto* leftEquipped = player->GetActorRuntimeData().selectedSpells[0];
+            auto* rightEquipped = player->GetActorRuntimeData().selectedSpells[1];
+
+            for (auto& rec : a_records) {
+                if (rec.formID == 0) continue;
+
+                RE::SpellItem* liveSpell = nullptr;
+                for (auto* sp : player->GetActorRuntimeData().addedSpells) {
+                    if (sp && sp->GetFormID() == rec.formID) {
+                        liveSpell = sp;
+                        break;
+                    }
+                }
+
+                if (!liveSpell) continue;
+
+                rec.equippedLeft = (leftEquipped == liveSpell);
+                rec.equippedRight = (rightEquipped == liveSpell);
+
+                if (magicFavs) {
+                    rec.isFavorited = (std::find(magicFavs->spells.begin(), magicFavs->spells.end(), liveSpell) != magicFavs->spells.end());
+                    rec.hotkeySlot = -1;
+                    for (std::size_t i = 0; i < magicFavs->hotkeys.size(); ++i) {
+                        if (magicFavs->hotkeys[i] == liveSpell) {
+                            rec.hotkeySlot = static_cast<int32_t>(i);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Scrubs any dangling/freed pointers or non-spell forms from MagicFavorites and captures in-session state
+        void ScrubDanglingFavorites(std::vector<CustomSpellRecord>& a_activeRecords)
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* magicFavs = RE::MagicFavorites::GetSingleton();
+
+            // First, if any old custom spells are still live in memory (e.g. quickload), snapshot their current states
+            if (player) {
+                auto* leftEq = player->GetActorRuntimeData().selectedSpells[0];
+                auto* rightEq = player->GetActorRuntimeData().selectedSpells[1];
+
+                for (auto& rec : a_activeRecords) {
+                    for (auto* sp : player->GetActorRuntimeData().addedSpells) {
+                        if (sp && sp->GetFormID() == rec.formID) {
+                            if (leftEq == sp) rec.equippedLeft = true;
+                            if (rightEq == sp) rec.equippedRight = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             if (!magicFavs) {
                 return;
             }
 
-            auto isTrackedDynamicID = [&](RE::FormID a_id) -> bool {
-                if (a_id < 0xFF000000) {
-                    return false;
-                }
-                if (std::find(a_historicalIDs.begin(), a_historicalIDs.end(), a_id) != a_historicalIDs.end()) {
-                    return true;
-                }
-                for (const auto& rec : a_activeRecords) {
-                    if (rec.formID == a_id) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-
-            // Check hotkeys (1-8) before scrubbing so we can restore them to the newly instantiated spell
+            // 1. Sanitize 1-8 hotkeys safely
             for (std::size_t i = 0; i < magicFavs->hotkeys.size(); ++i) {
-                auto* form = magicFavs->hotkeys[i];
-                if (form && isTrackedDynamicID(form->GetFormID())) {
-                    a_outHotkeyOldIDs[form->GetFormID()] = i;
+                auto* formPtr = magicFavs->hotkeys[i];
+                if (!formPtr) continue;
+
+                RE::FormID liveID = 0;
+                const bool isLive = IsLiveValidMagicForm(formPtr, liveID);
+
+                if (!isLive || liveID >= 0xFF000000) {
+                    if (isLive) {
+                        for (auto& rec : a_activeRecords) {
+                            if (rec.formID == liveID) {
+                                rec.hotkeySlot = static_cast<int32_t>(i);
+                                rec.isFavorited = true;
+                            }
+                        }
+                    }
                     magicFavs->hotkeys[i] = nullptr;
                 }
             }
 
-            // Scrub favorites list and record which active spells were favorited
+            // 2. Sanitize MagicFavorites spells list safely
             for (auto it = magicFavs->spells.begin(); it != magicFavs->spells.end();) {
-                auto* form = *it;
-                if (!form) {
+                auto* formPtr = *it;
+                if (!formPtr) {
                     it = magicFavs->spells.erase(it);
                     continue;
                 }
 
-                const auto formID = form->GetFormID();
-                if (isTrackedDynamicID(formID)) {
-                    a_outFavoritedOldIDs.insert(formID);
+                RE::FormID liveID = 0;
+                const bool isLive = IsLiveValidMagicForm(formPtr, liveID);
+
+                if (!isLive || liveID >= 0xFF000000) {
+                    if (isLive) {
+                        for (auto& rec : a_activeRecords) {
+                            if (rec.formID == liveID) {
+                                rec.isFavorited = true;
+                            }
+                        }
+                    }
+                    SKSE::log::info("[Serialization] Safely scrubbed invalid/dynamic pointer from MagicFavorites.");
                     it = magicFavs->spells.erase(it);
                 } else {
                     ++it;
@@ -102,7 +211,7 @@ namespace Spellmaking
         serialization->SetLoadCallback(OnLoad);
         serialization->SetRevertCallback(OnRevert);
 
-        SKSE::log::info("[Serialization] SKSE Co-Save v3 interface successfully registered.");
+        SKSE::log::info("[Serialization] SKSE Co-Save v4 interface successfully registered.");
     }
 
     void Serialization::PurgePlayerCustomSpells()
@@ -112,57 +221,26 @@ namespace Spellmaking
             return;
         }
 
+        // Clear any dangling dynamic spell pointers in player's Left/Right hand slots before removing
+        for (std::size_t slot = 0; slot < 2; ++slot) {
+            auto* eqSpell = player->GetActorRuntimeData().selectedSpells[slot];
+            if (eqSpell) {
+                for (auto* sp : player->GetActorRuntimeData().addedSpells) {
+                    if (sp == eqSpell && sp->GetFormID() >= 0xFF000000) {
+                        player->GetActorRuntimeData().selectedSpells[slot] = nullptr;
+                        break;
+                    }
+                }
+            }
+        }
+
         std::size_t removedCount = 0;
 
-        // 1. Purge all historical dynamic FormIDs registered during the game session
-        for (const auto formID : s_allHistoricalFormIDs) {
-            if (formID >= 0xFF000000) {
-                if (auto* oldSpell = RE::TESForm::LookupByID<RE::SpellItem>(formID)) {
-                    RemoveFromMagicFavorites(oldSpell);
-                    if (player->HasSpell(oldSpell)) {
-                        player->RemoveSpell(oldSpell);
-                        removedCount++;
-                    }
-                }
-            }
-        }
-
-        // 2. Also purge any FormIDs that were recorded in the active custom spells
-        for (const auto& spell : s_activeCustomSpells) {
-            if (spell.formID >= 0xFF000000) {
-                if (auto* oldSpell = RE::TESForm::LookupByID<RE::SpellItem>(spell.formID)) {
-                    RemoveFromMagicFavorites(oldSpell);
-                    if (player->HasSpell(oldSpell)) {
-                        player->RemoveSpell(oldSpell);
-                        removedCount++;
-                    }
-                }
-            }
-        }
-
-        // 3. Scan runtime inventory to ensure no lingering ghosts remain in player's spellbook
         const auto& actorSpells = player->GetActorRuntimeData().addedSpells;
         std::vector<RE::SpellItem*> spellsToStrip;
         for (auto* sp : actorSpells) {
             if (sp && sp->GetFormID() >= 0xFF000000) {
-                bool isOurSpell = false;
-                for (const auto histID : s_allHistoricalFormIDs) {
-                    if (sp->GetFormID() == histID) {
-                        isOurSpell = true;
-                        break;
-                    }
-                }
-                if (!isOurSpell) {
-                    for (const auto& active : s_activeCustomSpells) {
-                        if (sp->GetFormID() == active.formID) {
-                            isOurSpell = true;
-                            break;
-                        }
-                    }
-                }
-                if (isOurSpell) {
-                    spellsToStrip.push_back(sp);
-                }
+                spellsToStrip.push_back(sp);
             }
         }
 
@@ -185,18 +263,15 @@ namespace Spellmaking
             return;
         }
 
-        // Capture which old dynamic FormIDs were in MagicFavorites before purging them
-        // This prevents FavoritesMenu from crashing on dangling pointers and seamlessly re-favorites the new spell!
-        std::unordered_set<RE::FormID> favoritedOldIDs;
-        std::unordered_map<RE::FormID, std::size_t> hotkeyOldIDs;
-        ScrubDanglingFavorites(s_allHistoricalFormIDs, s_activeCustomSpells, favoritedOldIDs, hotkeyOldIDs);
-
-        // Strip all ghost duplicates loaded by Skyrim's .ess save file
+        ScrubDanglingFavorites(s_activeCustomSpells);
         PurgePlayerCustomSpells();
 
         SKSE::log::info("[Serialization] Re-instantiating {} custom spells from co-save...", s_activeCustomSpells.size());
 
         auto* magicFavs = RE::MagicFavorites::GetSingleton();
+        auto* equipMgr = RE::ActorEquipManager::GetSingleton();
+        auto* leftSlot = GetLeftHandEquipSlot();
+        auto* rightSlot = GetRightHandEquipSlot();
 
         for (auto& rec : s_activeCustomSpells) {
             const RE::FormID oldFormID = rec.formID;
@@ -223,18 +298,29 @@ namespace Spellmaking
                         s_allHistoricalFormIDs.push_back(rec.formID);
                     }
 
-                    // If the spell was favorited in the save, re-bind the newly allocated SpellItem to MagicFavorites
-                    if (magicFavs && favoritedOldIDs.contains(oldFormID)) {
+                    // 1. Restore Favorite & Hotkey (1-8) status
+                    if (magicFavs && rec.isFavorited) {
                         if (std::find(magicFavs->spells.begin(), magicFavs->spells.end(), newSpell) == magicFavs->spells.end()) {
                             magicFavs->spells.push_back(newSpell);
                         }
-                        if (auto hkIt = hotkeyOldIDs.find(oldFormID); hkIt != hotkeyOldIDs.end()) {
-                            if (hkIt->second < magicFavs->hotkeys.size()) {
-                                magicFavs->hotkeys[hkIt->second] = newSpell;
-                            }
+                        if (rec.hotkeySlot >= 0 && static_cast<std::size_t>(rec.hotkeySlot) < magicFavs->hotkeys.size()) {
+                            magicFavs->hotkeys[static_cast<std::size_t>(rec.hotkeySlot)] = newSpell;
                         }
-                        SKSE::log::info("[Serialization] Restored favorite status for '{}' (Old: {:08X} -> New: {:08X}).",
-                            rec.spellName, oldFormID, rec.formID);
+                        SKSE::log::info("[Serialization] Restored favorite status for '{}' (Old: {:08X} -> New: {:08X}, Hotkey: {}).",
+                            rec.spellName, oldFormID, rec.formID, rec.hotkeySlot);
+                    }
+
+                    // 2. Restore Left / Right Hand Equipped state via ActorEquipManager
+                    // Fixes the empty sword-draw animation when pressing "R" after loading a save!
+                    if (equipMgr) {
+                        if (rec.equippedLeft && leftSlot) {
+                            equipMgr->EquipSpell(player, newSpell, leftSlot);
+                            SKSE::log::info("[Serialization] Re-equipped '{}' to Left Hand.", rec.spellName);
+                        }
+                        if (rec.equippedRight && rightSlot) {
+                            equipMgr->EquipSpell(player, newSpell, rightSlot);
+                            SKSE::log::info("[Serialization] Re-equipped '{}' to Right Hand.", rec.spellName);
+                        }
                     }
                 }
             }
@@ -312,12 +398,13 @@ namespace Spellmaking
 
         std::string spellName = it->spellName;
 
-        auto* spellItem = RE::TESForm::LookupByID<RE::SpellItem>(a_formID);
-        if (spellItem) {
-            // Also strip from MagicFavorites so FavoritesMenu never holds a deleted spell pointer
-            RemoveFromMagicFavorites(spellItem);
-            player->RemoveSpell(spellItem);
-            SKSE::log::info("[Serialization] Removed spell '{}' [{:08X}] from player inventory and favorites.", spellName, a_formID);
+        for (auto* sp : player->GetActorRuntimeData().addedSpells) {
+            if (sp && sp->GetFormID() == a_formID) {
+                RemoveFromMagicFavorites(sp);
+                player->RemoveSpell(sp);
+                SKSE::log::info("[Serialization] Removed spell '{}' [{:08X}] from player inventory and favorites.", spellName, a_formID);
+                break;
+            }
         }
 
         s_activeCustomSpells.erase(it);
@@ -374,6 +461,9 @@ namespace Spellmaking
 
     void Serialization::OnSave(SKSE::SerializationInterface* a_intfc)
     {
+        // Snapshot live Favorite, Hotkey, and Left/Right Hand equip states right before saving
+        SnapshotPlayerSpellStates(s_activeCustomSpells);
+
         if (!a_intfc->OpenRecord(kSpellRecordType, kCurrentSaveVersion)) {
             SKSE::log::error("[Serialization] Failed to open co-save record for writing!");
             return;
@@ -411,6 +501,15 @@ namespace Spellmaking
                 a_intfc->WriteRecordData(&fx.duration, sizeof(fx.duration));
                 a_intfc->WriteRecordData(&fx.areaFeet, sizeof(fx.areaFeet));
             }
+
+            // v4 additions: Favorite, Hotkey, Left/Right Hand equip states
+            uint8_t favByte = spell.isFavorited ? 1 : 0;
+            uint8_t leftByte = spell.equippedLeft ? 1 : 0;
+            uint8_t rightByte = spell.equippedRight ? 1 : 0;
+            a_intfc->WriteRecordData(&favByte, sizeof(favByte));
+            a_intfc->WriteRecordData(&spell.hotkeySlot, sizeof(spell.hotkeySlot));
+            a_intfc->WriteRecordData(&leftByte, sizeof(leftByte));
+            a_intfc->WriteRecordData(&rightByte, sizeof(rightByte));
         }
 
         uint32_t histCount = static_cast<uint32_t>(s_allHistoricalFormIDs.size());
@@ -419,7 +518,8 @@ namespace Spellmaking
             a_intfc->WriteRecordData(s_allHistoricalFormIDs.data(), histCount * sizeof(RE::FormID));
         }
 
-        SKSE::log::info("[Serialization] Successfully saved {} active spells and {} historical FormIDs.", activeCount, histCount);
+        SKSE::log::info("[Serialization] Successfully saved {} active spells (with equip/favorite states) and {} historical FormIDs.",
+            activeCount, histCount);
     }
 
     void Serialization::OnLoad(SKSE::SerializationInterface* a_intfc)
@@ -481,6 +581,21 @@ namespace Spellmaking
                     spell.effects.push_back(fx);
                 }
 
+                // Read v4 persistent Favorite, Hotkey, and Left/Right Hand equip states
+                if (version >= 4) {
+                    uint8_t favByte = 0;
+                    uint8_t leftByte = 0;
+                    uint8_t rightByte = 0;
+                    a_intfc->ReadRecordData(&favByte, sizeof(favByte));
+                    a_intfc->ReadRecordData(&spell.hotkeySlot, sizeof(spell.hotkeySlot));
+                    a_intfc->ReadRecordData(&leftByte, sizeof(leftByte));
+                    a_intfc->ReadRecordData(&rightByte, sizeof(rightByte));
+
+                    spell.isFavorited = (favByte != 0);
+                    spell.equippedLeft = (leftByte != 0);
+                    spell.equippedRight = (rightByte != 0);
+                }
+
                 s_activeCustomSpells.push_back(spell);
             }
 
@@ -495,12 +610,14 @@ namespace Spellmaking
                 }
             }
 
-            SKSE::log::info("[Serialization] Loaded {} active custom spells from co-save.", s_activeCustomSpells.size());
+            SKSE::log::info("[Serialization] Loaded {} active custom spells from co-save (v{}).", s_activeCustomSpells.size(), version);
         }
     }
 
     void Serialization::OnRevert(SKSE::SerializationInterface* /*a_intfc*/)
     {
+        // Snapshot states before revert in case of an in-game quickload
+        SnapshotPlayerSpellStates(s_activeCustomSpells);
         PurgePlayerCustomSpells();
         s_activeCustomSpells.clear();
         SKSE::log::info("[Serialization] Reverted custom spell registries on session reset (Historical FormIDs preserved).");

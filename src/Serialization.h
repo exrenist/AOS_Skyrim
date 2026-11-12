@@ -8,7 +8,7 @@
 
 namespace Spellmaking
 {
-    // Holds the runtime blueprint of a crafted custom spell
+    // Holds the runtime blueprint and persistent equip/favorite state of a crafted custom spell
     struct CustomSpellRecord
     {
         RE::FormID formID{ 0 };
@@ -18,6 +18,12 @@ namespace Spellmaking
         std::string targetTypeStr{ "Aimed" };
         uint32_t totalMagickaCost{ 0 };
         uint32_t totalGoldCost{ 0 };
+
+        // v4 Persistent UI & Hand Equip states across save/load cycles
+        bool isFavorited{ false };
+        int32_t hotkeySlot{ -1 };
+        bool equippedLeft{ false };
+        bool equippedRight{ false };
 
         struct EffectRecord
         {
@@ -36,7 +42,7 @@ namespace Spellmaking
     public:
         // Unique 4-character SKSE Co-Save record type identifier
         static constexpr uint32_t kSpellRecordType = 'SPMK';
-        static constexpr uint32_t kCurrentSaveVersion = 3;
+        static constexpr uint32_t kCurrentSaveVersion = 4;
 
         // Registers SKSE serialization interface listeners
         static void Register();

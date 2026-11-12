@@ -3,14 +3,18 @@
 #include "PapyrusInterface.h"
 #include "PrismaBridge.h"
 #include "MagicDiagnostics.h"
+#include "CompatibilityManager.h"
 
 // Lifecycle listener handling SKSE engine messages
 void OnMessage(SKSE::MessagingInterface::Message* a_message)
 {
     switch (a_message->type) {
     case SKSE::MessagingInterface::kDataLoaded:
-        // Bind PrismaUI runtime API once game data is fully loaded
+        // 1. Bind PrismaUI runtime API once game data is fully loaded
         Spellmaking::PrismaBridge::InitializeAPI();
+
+        // 2. Load mod compatibility INI rules from disk
+        Spellmaking::CompatibilityManager::GetSingleton()->LoadRules();
         break;
 
     case SKSE::MessagingInterface::kPostLoadGame:

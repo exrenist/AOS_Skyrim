@@ -1,10 +1,15 @@
 {
   "schema": 1,
   "name": "AOS_Skyrim",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "akisar",
   "description": "Altar of Spellmaking in Skyrim NG",
   "libraries": {
+    "clibutil": {
+      "name": "clibutil",
+      "revision": "5f845f38089c7ee92f01c000de420570b8cfee0c",
+      "repository": "https://github.com/powerof3/ClibUtil.git"
+    },
     "commonlib": {
       "name": "commonlib",
       "revision": "dddc6ec670381ab6af883b32dcb67a2589878acd",

@@ -1,4 +1,5 @@
 #include "SpellFactory.h"
+#include "CompatibilityManager.h"
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -45,36 +46,19 @@ namespace Spellmaking
             return a_mgef && (a_mgef->data.explosion != nullptr);
         }
 
-        [[nodiscard]] bool HasValidProjectile(const RE::EffectSetting* a_mgef)
+        [[nodiscard]] bool HasAuthenticCollidingProjectile(const RE::EffectSetting* a_mgef)
         {
-            return a_mgef && (a_mgef->data.projectileBase != nullptr);
-        }
-
-        [[nodiscard]] RE::BGSProjectile* ResolveAuthenticCollidingProjectile(RE::ActorValue a_school, const std::string& a_name)
-        {
-            RE::FormID projFormID = 0x00012FD0; // MAG_DestructionBolt_Proj
-
-            const std::string lower = [&]() {
-                std::string s = a_name;
-                std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                return s;
-            }();
-
-            if (lower.find("lightning") != std::string::npos || lower.find("shock") != std::string::npos || lower.find("spark") != std::string::npos) {
-                projFormID = 0x0003BEE9; // LightningBoltProjectile
-            } else if (lower.find("fire") != std::string::npos || lower.find("flame") != std::string::npos) {
-                projFormID = 0x00012F04; // FireboltProjectile
-            } else if (lower.find("frost") != std::string::npos || lower.find("ice") != std::string::npos || lower.find("cold") != std::string::npos) {
-                projFormID = 0x0003BEF0; // IceSpikeProjectile
+            if (!a_mgef || !a_mgef->data.projectileBase) {
+                return false;
             }
-
-            return RE::TESForm::LookupByID<RE::BGSProjectile>(projFormID);
+            if (a_mgef->data.archetype == RE::EffectArchetypes::ArchetypeID::kScript) {
+                return false;
+            }
+            return true;
         }
 
-        // Safely resolves the authentic EitherHand BGSEquipSlot from vanilla player spells
         [[nodiscard]] RE::BGSEquipSlot* ResolveEitherHandEquipSlot()
         {
-            // Query vanilla Flames (0x00012FCD), Healing (0x00012FCC), or Firebolt (0x00012F03)
             static constexpr RE::FormID kVanillaHandSpells[] = { 0x00012FCD, 0x00012FCC, 0x00012F03 };
             for (const auto spellID : kVanillaHandSpells) {
                 if (auto* vanillaSpell = RE::TESForm::LookupByID<RE::SpellItem>(spellID)) {
@@ -84,7 +68,6 @@ namespace Spellmaking
                 }
             }
 
-            // Fallback: Skyrim.esm EitherHand EquipSlot FormID is 0x00013F44
             return RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x00013F44);
         }
     }
@@ -95,7 +78,6 @@ namespace Spellmaking
         RE::TESConditionItem** destTail = &a_dest.head;
 
         while (srcItem) {
-            // Function ID: 53 = GetSpell, 89 = GetEquippedSpell
             const auto rawFunctionID = static_cast<std::uint32_t>(srcItem->data.functionData.function.get());
             const bool isSpellSelfLock = (rawFunctionID == 53 || rawFunctionID == 89);
 
@@ -188,12 +170,9 @@ namespace Spellmaking
         spell->formFlags |= RE::TESForm::RecordFlags::kInitialized;
         spell->fullName = a_params.spellName.c_str();
         spell->data.spellType = RE::MagicSystem::SpellType::kSpell;
-        spell->data.delivery = a_params.deliveryType;
         spell->data.castingType = a_params.castingType;
         spell->data.chargeTime = a_params.chargeTime;
         spell->data.castingPerk = nullptr;
-
-        // Assign genuine EitherHand equip slot so both Left ("L") and Right ("R") hands work in FavoritesMenu
         spell->equipSlot = ResolveEitherHandEquipSlot();
 
         auto sortedEffects = a_params.effects;
@@ -204,104 +183,77 @@ namespace Spellmaking
                 return aExplosive > bExplosive;
             }
 
-            const bool aProj = HasValidProjectile(a.effectSetting);
-            const bool bProj = HasValidProjectile(b.effectSetting);
-            if (aProj != bProj) {
-                return aProj > bProj;
+            const bool aCollidingProj = HasAuthenticCollidingProjectile(a.effectSetting);
+            const bool bCollidingProj = HasAuthenticCollidingProjectile(b.effectSetting);
+            if (aCollidingProj != bCollidingProj) {
+                return aCollidingProj > bCollidingProj;
             }
 
             return a.area > b.area;
         });
 
         auto* primaryMGEF = sortedEffects[0].effectSetting;
-        const auto primarySchool = primaryMGEF ? primaryMGEF->data.primaryAV : RE::ActorValue::kDestruction;
-        auto* dataHandler = RE::TESDataHandler::GetSingleton();
-
-        // 1. Inherit 3D inventory orb model
-        RE::SpellItem* parentSpell = nullptr;
-        if (dataHandler) {
-            for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
-                if (!s || s->effects.empty()) continue;
-                for (auto* eff : s->effects) {
-                    if (eff && eff->baseEffect == primaryMGEF) {
-                        parentSpell = s;
-                        break;
-                    }
-                }
-                if (parentSpell) break;
-            }
+        if (a_params.deliveryType == RE::MagicSystem::Delivery::kSelf) {
+            spell->data.delivery = RE::MagicSystem::Delivery::kSelf;
+        } else if (primaryMGEF && primaryMGEF->data.delivery != RE::MagicSystem::Delivery::kSelf) {
+            spell->data.delivery = primaryMGEF->data.delivery;
+        } else {
+            spell->data.delivery = a_params.deliveryType;
         }
 
-        if (parentSpell && parentSpell->menuDispObject) {
-            spell->menuDispObject = parentSpell->menuDispObject;
+        const auto primarySchool = primaryMGEF ? primaryMGEF->data.primaryAV : RE::ActorValue::kDestruction;
+        auto* compatMgr = CompatibilityManager::GetSingleton();
+
+        // 1. Resolve exact parent spells for the player-chosen effects ONLY (Disambiguated!)
+        std::vector<RE::FormID> authenticParentSpellIDs;
+        RE::SpellItem* primaryParentSpell = nullptr;
+
+        if (compatMgr) {
+            for (const auto& fx : sortedEffects) {
+                if (!fx.effectSetting) continue;
+                if (auto* exactParent = compatMgr->ResolveExactParentSpell(fx.effectSetting)) {
+                    if (!primaryParentSpell) {
+                        primaryParentSpell = exactParent;
+                    }
+                    if (std::find(authenticParentSpellIDs.begin(), authenticParentSpellIDs.end(), exactParent->GetFormID()) == authenticParentSpellIDs.end()) {
+                        authenticParentSpellIDs.push_back(exactParent->GetFormID());
+                        SKSE::log::info("SpellFactory: Mapped user-selected effect '{}' -> Exact Parent Spell '{}' (0x{:08X}).",
+                            fx.effectSetting->GetFullName(), exactParent->GetFullName(), exactParent->GetFormID());
+                    }
+                }
+            }
+            compatMgr->RegisterCraftedSpellSources(spell->GetFormID(), authenticParentSpellIDs);
+        }
+
+        if (primaryParentSpell && primaryParentSpell->menuDispObject) {
+            spell->menuDispObject = primaryParentSpell->menuDispObject;
         } else {
             spell->menuDispObject = ResolveMenuDisplayObject(primarySchool);
         }
 
-        // 2. Resolve Master Projectile
-        RE::BGSProjectile* masterProjectile = nullptr;
-        if (spell->data.delivery == RE::MagicSystem::Delivery::kAimed) {
-            if (HasValidProjectile(primaryMGEF)) {
-                masterProjectile = primaryMGEF->data.projectileBase;
-            } else {
-                masterProjectile = ResolveAuthenticCollidingProjectile(primarySchool, primaryMGEF ? primaryMGEF->GetFullName() : "");
-            }
+        // 2. Keyword Harvesting from verified parents only
+        std::vector<RE::BGSKeyword*> aggregatedKeywords;
+        for (const auto& fx : sortedEffects) {
+            if (!fx.effectSetting) continue;
 
-            if (primaryMGEF && masterProjectile) {
-                primaryMGEF->data.projectileBase = masterProjectile;
+            auto* mgefKw = static_cast<RE::BGSKeywordForm*>(fx.effectSetting);
+            if (mgefKw && mgefKw->keywords) {
+                for (std::uint32_t k = 0; k < mgefKw->numKeywords; ++k) {
+                    if (mgefKw->keywords[k] && std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), mgefKw->keywords[k]) == aggregatedKeywords.end()) {
+                        aggregatedKeywords.push_back(mgefKw->keywords[k]);
+                    }
+                }
             }
         }
 
-        // 3. Keyword Harvesting & Explicit Injections
-        std::vector<RE::BGSKeyword*> aggregatedKeywords;
-        if (dataHandler) {
-            for (const auto& fx : sortedEffects) {
-                if (!fx.effectSetting) continue;
-
-                auto* mgefKw = static_cast<RE::BGSKeywordForm*>(fx.effectSetting);
-                if (mgefKw && mgefKw->keywords) {
-                    for (std::uint32_t k = 0; k < mgefKw->numKeywords; ++k) {
-                        if (mgefKw->keywords[k] && std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), mgefKw->keywords[k]) == aggregatedKeywords.end()) {
-                            aggregatedKeywords.push_back(mgefKw->keywords[k]);
+        for (const auto parentID : authenticParentSpellIDs) {
+            if (auto* parentSpell = RE::TESForm::LookupByID<RE::SpellItem>(parentID)) {
+                auto* srcKw = static_cast<RE::BGSKeywordForm*>(static_cast<RE::MagicItem*>(parentSpell));
+                if (srcKw && srcKw->keywords) {
+                    for (std::uint32_t k = 0; k < srcKw->numKeywords; ++k) {
+                        if (srcKw->keywords[k] && std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), srcKw->keywords[k]) == aggregatedKeywords.end()) {
+                            aggregatedKeywords.push_back(srcKw->keywords[k]);
                         }
-                    }
-                }
-
-                for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
-                    if (!s || s->effects.empty()) continue;
-                    for (auto* eff : s->effects) {
-                        if (eff && eff->baseEffect == fx.effectSetting) {
-                            auto* srcKw = static_cast<RE::BGSKeywordForm*>(s);
-                            if (srcKw && srcKw->keywords) {
-                                for (std::uint32_t k = 0; k < srcKw->numKeywords; ++k) {
-                                    if (srcKw->keywords[k] && std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), srcKw->keywords[k]) == aggregatedKeywords.end()) {
-                                        aggregatedKeywords.push_back(srcKw->keywords[k]);
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-            for (const auto& fx : sortedEffects) {
-                if (!fx.effectSetting) continue;
-                const std::string name = fx.effectSetting->GetFullName();
-
-                if (name.find("Lightning") != std::string::npos || name.find("Shock") != std::string::npos || name.find("Spark") != std::string::npos) {
-                    if (auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00046B9C)) {
-                        if (std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), kw) == aggregatedKeywords.end()) aggregatedKeywords.push_back(kw);
-                    }
-                }
-                if (name.find("Fire") != std::string::npos || name.find("Flame") != std::string::npos) {
-                    if (auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00046B99)) {
-                        if (std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), kw) == aggregatedKeywords.end()) aggregatedKeywords.push_back(kw);
-                    }
-                }
-                if (name.find("Frost") != std::string::npos || name.find("Cold") != std::string::npos || name.find("Ice") != std::string::npos) {
-                    if (auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00046B9A)) {
-                        if (std::find(aggregatedKeywords.begin(), aggregatedKeywords.end(), kw) == aggregatedKeywords.end()) aggregatedKeywords.push_back(kw);
                     }
                 }
             }
@@ -317,7 +269,7 @@ namespace Spellmaking
             dstKw->numKeywords = static_cast<std::uint32_t>(aggregatedKeywords.size());
         }
 
-        // 4. Resolve Master Blast Area
+        // 3. Resolve Master Blast Area
         std::uint32_t masterBlastArea = 0;
         for (const auto& fx : sortedEffects) {
             if (HasExplosion(fx.effectSetting) && fx.area == 0) {
@@ -337,10 +289,9 @@ namespace Spellmaking
             std::uint32_t minDur = 0;
             std::uint32_t minArea = 0;
 
-            if (dataHandler) {
-                for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
-                    if (!s || s->effects.empty()) continue;
-                    for (auto* eff : s->effects) {
+            if (compatMgr) {
+                if (auto* exactParent = compatMgr->ResolveExactParentSpell(fx.effectSetting)) {
+                    for (auto* eff : exactParent->effects) {
                         if (eff && eff->baseEffect == fx.effectSetting) {
                             minMag = eff->effectItem.magnitude;
                             minDur = eff->effectItem.duration;
@@ -348,7 +299,6 @@ namespace Spellmaking
                             break;
                         }
                     }
-                    if (minMag > 0.0f || minDur > 0) break;
                 }
             }
 
@@ -367,16 +317,12 @@ namespace Spellmaking
                 effectItem->effectItem.area = clampedArea;
             }
 
-            if (spell->data.delivery == RE::MagicSystem::Delivery::kAimed && masterProjectile && !fx.effectSetting->data.projectileBase) {
-                fx.effectSetting->data.projectileBase = masterProjectile;
-            }
-
             CloneConditions(effectItem->conditions, fx.effectSetting->conditions);
 
             const std::uint32_t singleCost = CalculateCost(fx.effectSetting, clampedMagnitude, clampedDuration, effectItem->effectItem.area);
 
             if (effectIndex == 0) {
-                effectItem->cost = static_cast<float>(singleCost + 1);
+                effectItem->cost = static_cast<float>(singleCost + 500);
                 totalActualCost += singleCost;
             } else {
                 effectItem->cost = static_cast<float>(singleCost);
@@ -387,58 +333,44 @@ namespace Spellmaking
             effectIndex++;
         }
 
-        // 5. Universal Companion Effect Preserver (Apocalypse / Modded Spells)
-        if (dataHandler) {
-            for (const auto& fx : sortedEffects) {
-                if (!fx.effectSetting) continue;
+        // 4. Disambiguated Companion Effect Preserver:
+        // Only attaches companions from the exact verified parent spells of the user's selected effects!
+        for (const auto parentID : authenticParentSpellIDs) {
+            auto* exactParent = RE::TESForm::LookupByID<RE::SpellItem>(parentID);
+            if (!exactParent || exactParent->effects.size() <= 1) continue;
 
-                for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
-                    if (!s || s->effects.size() <= 1) continue;
+            for (auto* companionEff : exactParent->effects) {
+                if (!companionEff || !companionEff->baseEffect) continue;
 
-                    bool belongsToThisSpell = false;
-                    for (auto* eff : s->effects) {
-                        if (eff && eff->baseEffect == fx.effectSetting) {
-                            belongsToThisSpell = true;
-                            break;
-                        }
-                    }
-
-                    if (belongsToThisSpell) {
-                        for (auto* companionEff : s->effects) {
-                            if (!companionEff || !companionEff->baseEffect || companionEff->baseEffect == fx.effectSetting) {
-                                continue;
-                            }
-
-                            bool alreadyAdded = false;
-                            for (auto* existing : spell->effects) {
-                                if (existing && existing->baseEffect == companionEff->baseEffect) {
-                                    alreadyAdded = true;
-                                    break;
-                                }
-                            }
-
-                            if (!alreadyAdded) {
-                                auto* clonedCompanion = new RE::Effect();
-                                clonedCompanion->baseEffect = companionEff->baseEffect;
-                                clonedCompanion->effectItem.magnitude = companionEff->effectItem.magnitude;
-                                clonedCompanion->effectItem.duration = companionEff->effectItem.duration;
-                                clonedCompanion->effectItem.area = companionEff->effectItem.area;
-                                clonedCompanion->cost = 0.0f;
-
-                                if (spell->data.delivery == RE::MagicSystem::Delivery::kAimed && masterProjectile && !companionEff->baseEffect->data.projectileBase) {
-                                    companionEff->baseEffect->data.projectileBase = masterProjectile;
-                                }
-
-                                CloneConditions(clonedCompanion->conditions, companionEff->conditions);
-                                spell->effects.push_back(clonedCompanion);
-
-                                SKSE::log::info("SpellFactory: Attached companion script effect '{}' (0x{:08X}) from source spell '{}'.",
-                                    companionEff->baseEffect->GetFullName(), companionEff->baseEffect->GetFormID(), s->GetFullName());
-                            }
-                        }
+                // Skip if already present
+                bool alreadyAdded = false;
+                for (auto* existing : spell->effects) {
+                    if (existing && existing->baseEffect == companionEff->baseEffect) {
+                        alreadyAdded = true;
                         break;
                     }
                 }
+                if (alreadyAdded) continue;
+
+                // Do not attach companions with conflicting delivery types into the SpellItem (handled by Cast-Proc)
+                if (companionEff->baseEffect->data.delivery != spell->data.delivery) {
+                    SKSE::log::info("SpellFactory: Delegating conflicting delivery companion '{}' (from '{}') to Cast-Proc Engine.",
+                        companionEff->baseEffect->GetFullName(), exactParent->GetFullName());
+                    continue;
+                }
+
+                auto* clonedCompanion = new RE::Effect();
+                clonedCompanion->baseEffect = companionEff->baseEffect;
+                clonedCompanion->effectItem.magnitude = companionEff->effectItem.magnitude;
+                clonedCompanion->effectItem.duration = companionEff->effectItem.duration;
+                clonedCompanion->effectItem.area = companionEff->effectItem.area;
+                clonedCompanion->cost = 0.0f;
+
+                CloneConditions(clonedCompanion->conditions, companionEff->conditions);
+                spell->effects.push_back(clonedCompanion);
+
+                SKSE::log::info("SpellFactory: Attached verified companion '{}' (0x{:08X}) from exact parent '{}'.",
+                    companionEff->baseEffect->GetFullName(), companionEff->baseEffect->GetFormID(), exactParent->GetFullName());
             }
         }
 
@@ -447,9 +379,9 @@ namespace Spellmaking
 
         a_player->AddSpell(spell);
 
-        SKSE::log::info("SpellFactory: Successfully forged composite spell '{}' (FormID: 0x{:08X}) with {} effects, equipSlot: {:08X}, Balanced Cost: {}",
+        SKSE::log::info("SpellFactory: Successfully forged composite spell '{}' (FormID: 0x{:08X}) with {} effects, Delivery: {}, Balanced Cost: {}",
             a_params.spellName, static_cast<std::uint32_t>(spell->GetFormID()), spell->effects.size(),
-            spell->equipSlot ? spell->equipSlot->GetFormID() : 0, spell->data.costOverride);
+            static_cast<int>(spell->data.delivery), spell->data.costOverride);
 
         return spell;
     }
